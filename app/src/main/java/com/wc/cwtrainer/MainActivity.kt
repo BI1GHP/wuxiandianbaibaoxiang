@@ -27,7 +27,6 @@ import com.wc.cwtrainer.ui.screens.ContestScreen
 import com.wc.cwtrainer.ui.screens.CopyScreen
 import com.wc.cwtrainer.ui.screens.HomeScreen
 import com.wc.cwtrainer.ui.screens.LearnScreen
-import com.wc.cwtrainer.ui.screens.SendScreen
 import com.wc.cwtrainer.ui.screens.SettingsScreen
 import com.wc.cwtrainer.ui.screens.TranslatorScreen
 
@@ -67,7 +66,6 @@ class MainActivity : ComponentActivity() {
                             AppScreen.HOME -> HomeScreen(app) { screen = it }
                             AppScreen.COPY -> CopyScreen(app) { screen = AppScreen.HOME }
                             AppScreen.LEARN -> LearnScreen(app) { screen = AppScreen.HOME }
-                            AppScreen.SEND -> SendScreen(app) { screen = AppScreen.HOME }
                             AppScreen.CONTEST -> ContestScreen(app) { screen = AppScreen.HOME }
                             AppScreen.TRANSLATOR -> TranslatorScreen(app) { screen = AppScreen.HOME }
                             AppScreen.SETTINGS -> SettingsScreen(app) { screen = AppScreen.HOME }
@@ -93,4 +91,4 @@ class AppState(context: Context) {
     }
 }
 
-enum class AppScreen { HOME, COPY, LEARN, SEND, CONTEST, TRANSLATOR, SETTINGS }
+enum class AppScreen { HOME, COPY, LEARN, CONTEST, TRANSLATOR, SETTINGS }

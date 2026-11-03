@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppScreen
 import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.ui.Amber
-import com.wc.cwtrainer.ui.Cyan
 import com.wc.cwtrainer.ui.Green
 import com.wc.cwtrainer.ui.Line
 import com.wc.cwtrainer.ui.Pill
@@ -95,24 +94,16 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
         Spacer(Modifier.height(10.dp))
         MenuCard(
             index = "03",
-            title = "发码练习",
-            desc = "屏幕双键 · 手键 / 自动键模式 · 外部音频接口接入",
-            accent = Cyan
-        ) { onOpen(AppScreen.SEND) }
-
-        Spacer(Modifier.height(10.dp))
-        MenuCard(
-            index = "04",
             title = "赛事听抄",
-            desc = "SSB / CW 赛事场景，各国呼号、信号报告、序号与口音",
+            desc = "CW 赛事场景，盲听接收、频谱瀑布、信号报告与序号",
             accent = Color(0xFFFF9F6B)
         ) { onOpen(AppScreen.CONTEST) }
 
         Spacer(Modifier.height(10.dp))
         MenuCard(
-            index = "05",
+            index = "04",
             title = "CW 翻译器",
-            desc = "实时解码外部电码 · 文本转 CW 播放",
+            desc = "实时解码外部电码 · 屏幕手键/自动键发码 · 文本转 CW 播放",
             accent = Color(0xFF7ED4FF)
         ) { onOpen(AppScreen.TRANSLATOR) }
 
