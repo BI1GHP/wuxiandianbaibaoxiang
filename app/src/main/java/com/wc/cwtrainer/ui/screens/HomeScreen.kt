@@ -57,7 +57,7 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
                     letterSpacing = 2.sp
                 )
                 Text(
-                    text = "V1.0  ·  BI1GHP",
+                    text = "${com.wc.cwtrainer.BuildConfig.VERSION_NAME}  ·  BI1GHP",
                     color = Amber,
                     fontSize = 12.sp,
                     letterSpacing = 1.sp,

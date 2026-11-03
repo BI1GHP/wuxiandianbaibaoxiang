@@ -8,12 +8,16 @@ android {
     namespace = "com.wc.cwtrainer"
     compileSdk = 34
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.wc.cwtrainer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "V1.0"
+        versionCode = 2
+        versionName = "V1.1"
     }
 
     buildTypes {

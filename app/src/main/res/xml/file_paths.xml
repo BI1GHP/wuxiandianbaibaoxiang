@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-path name="downloads" path="Download/" />
+    <external-path name="wc-updates" path="Download/wc-updates/" />
+    <external-files-path name="updates" path="Download/updates/" />
+    <cache-path name="cache" path="." />
+</paths>
