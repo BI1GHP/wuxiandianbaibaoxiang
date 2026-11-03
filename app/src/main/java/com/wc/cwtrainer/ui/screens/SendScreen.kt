@@ -84,52 +84,37 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
 
     var target by remember { mutableStateOf(TextFieldValue("CQ CQ DE BG1WC K")) }
     var sent by remember { mutableStateOf("") }
-    var session by remember { mutableStateOf(false) }
     var keying by remember { mutableStateOf(false) }
+    var currentElem by remember { mutableStateOf<Char?>(null) }
     var result by remember { mutableStateOf<SendResult?>(null) }
     var showTargetInput by remember { mutableStateOf(false) }
 
     var dotHeld by remember { mutableStateOf(false) }
     var dashHeld by remember { mutableStateOf(false) }
-    var paddleMemory by remember { mutableStateOf<Char?>(null) }
-    var lastElem by remember { mutableStateOf<Char?>(null) }
+    // 注意：paddleMemory 不再是 Compose state，只在 paddling 循环内部作为局部变量
 
     var listening by remember { mutableStateOf(false) }
     var micLevel by remember { mutableStateOf(0f) }
     var micDenied by remember { mutableStateOf(false) }
 
     val decoder = remember { MorseDecoder(s.wpm.toDouble()) }
-    val sessionNow by rememberUpdatedState(session)
+
+    fun resetAll() {
+        dotHeld = false; dashHeld = false; keying = false
+        currentElem = null; sent = ""; result = null
+        decoder.reset()
+    }
 
     fun startSession() {
-        app.audio.stop()
-        app.speaker.stop()
-        decoder.reset()
-        sent = ""
-        result = null
-        paddleMemory = null
-        lastElem = null
-        dotHeld = false
-        dashHeld = false
-        session = true
+        app.audio.stop(); app.speaker.stop()
+        resetAll()
         val cur = app.prefs.data
         app.sidetone.frequency = cur.toneHz.toDouble()
         app.sidetone.volume = cur.volume
         if (cur.inputSource == InputMode.SCREEN) app.sidetone.start()
     }
 
-    fun stopSession() {
-        if (decoder.isKeyDown) decoder.keyUp(SystemClock.elapsedRealtime())
-        decoder.commit()
-        sent = decoder.text
-        session = false
-        keying = false
-        app.sidetone.gated = false
-        app.sidetone.stop()
-    }
-
     fun evaluate() {
-        if (session) stopSession()
         decoder.commit()
         val sentText = decoder.text
         sent = sentText
@@ -142,18 +127,14 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
 
     fun regenerateTarget() {
         target = TextFieldValue(Generators.groups(Generators.MIXED, 3, 4))
-        if (session) stopSession()
-        sent = ""; result = null
+        resetAll()
     }
 
     fun leverDown(c: Char) {
-        if (!session || app.prefs.data.inputSource != InputMode.SCREEN) return
         if (c == '.') dotHeld = true else dashHeld = true
     }
     fun leverUp(c: Char) {
         if (c == '.') dotHeld = false else dashHeld = false
-        val modeB = app.prefs.data.iambicB
-        if (lastElem == null || (modeB && lastElem != c)) paddleMemory = c
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -162,7 +143,7 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
         if (granted) { micDenied = false; listening = true } else { micDenied = true }
     }
     fun toggleListening() {
-        if (listening) { listening = false; if (session) stopSession() }
+        if (listening) listening = false
         else {
             val ok = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
@@ -170,39 +151,102 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(session) {
-        while (session) { delay(40); decoder.tick(SystemClock.elapsedRealtime()); sent = decoder.text }
-    }
-    LaunchedEffect(session, s.inputSource) {
-        if (!session || s.inputSource != InputMode.SCREEN) return@LaunchedEffect
+    // —— 进入页面自动启动（按键直接可用）——
+    LaunchedEffect(Unit) { startSession() }
+    DisposableEffect(Unit) { onDispose { app.sidetone.stop() } }
+
+    // —— 解码 tick：40ms —— sent 只从这里写入，paddling 循环不碰 sent ——
+    LaunchedEffect(Unit) {
         while (true) {
-            if (!dotHeld && !dashHeld && paddleMemory == null) { delay(15); continue }
-            val next = when {
-                dotHeld && dashHeld -> if (lastElem == '.') '-' else '.'
-                dotHeld -> '.'; dashHeld -> '-'
-                else -> paddleMemory!!
+            delay(40)
+            decoder.tick(SystemClock.elapsedRealtime())
+            sent = decoder.text  // 唯一写入者
+        }
+    }
+
+    // —— paddling 核心：2ms tick —— 只写 sidetone + decoder，绝对不写任何 Compose state ——
+    LaunchedEffect(Unit) {
+        var lastSentElem: Char? = null   // 跟踪上一个发码（IAMBIC B 交替用）
+        var paddleMem: Char? = null      // paddle memory（双桨松开后继续延续）
+        while (true) {
+            val wpm = app.prefs.data.wpm
+            val unitMs = 1200.0 / wpm
+
+            val target = when {
+                dotHeld && dashHeld -> {
+                    // 双桨同时按下 → IAMBIC B 交替
+                    if (lastSentElem == null) '.' else if (lastSentElem == '.') '-' else '.'
+                }
+                dotHeld -> '.'
+                dashHeld -> '-'
+                paddleMem != null -> paddleMem!!
+                else -> null
             }
-            if (!dotHeld && !dashHeld) paddleMemory = null
-            val unitMs = 1200.0 / app.prefs.data.wpm
-            val durMs = if (next == '.') unitMs else unitMs * 3.0
-            lastElem = next; keying = true; app.sidetone.gated = true
-            decoder.keyDown(SystemClock.elapsedRealtime()); delay(durMs.toLong())
-            app.sidetone.gated = false
-            decoder.keyUp(SystemClock.elapsedRealtime()); keying = false; delay(unitMs.toLong())
+
+            if (target != null) {
+                paddleMem = null
+                lastSentElem = target
+                val durMs = if (target == '.') unitMs.toLong() else (unitMs * 3.0).toLong()
+
+                app.sidetone.gated = true
+                decoder.keyDown(SystemClock.elapsedRealtime())
+
+                val holdStart = SystemClock.elapsedRealtime()
+                var interrupted = false
+                while (SystemClock.elapsedRealtime() - holdStart < durMs) {
+                    delay(2)
+                    // 单桨按到底自动连续发；双桨切换时打断当前码
+                    val needSwitch = when {
+                        target == '.' && dashHeld && !dotHeld -> true
+                        target == '-' && dotHeld && !dashHeld -> true
+                        else -> false
+                    }
+                    if (needSwitch) { interrupted = true; break }
+                }
+
+                app.sidetone.gated = false
+                decoder.keyUp(SystemClock.elapsedRealtime())
+
+                if (!interrupted) {
+                    val gapStart = SystemClock.elapsedRealtime()
+                    while (SystemClock.elapsedRealtime() - gapStart < unitMs) {
+                        delay(2)
+                        // 在 gap 期间如果还有一个键按着 → paddle memory
+                        if (dotHeld && !dashHeld) { paddleMem = '.'; break }
+                        if (dashHeld && !dotHeld) { paddleMem = '-'; break }
+                    }
+                }
+            } else {
+                lastSentElem = null
+                paddleMem = null
+                delay(2)
+            }
+        }
+    }
+
+    // —— UI 节流 tick：60ms —— 从 decoder 读状态，驱动 UI 显示 ——
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60)
+            keying = app.sidetone.gated
+            currentElem = when {
+                dotHeld -> '.'
+                dashHeld -> '-'
+                else -> null
+            }
         }
     }
     LaunchedEffect(listening) {
         if (listening) {
             if (app.prefs.data.inputSource != InputMode.AUDIO)
                 app.prefs.update { it.copy(inputSource = InputMode.AUDIO) }
-            if (!session) startSession()
         }
     }
     DisposableEffect(listening, s.extToneHz, s.micSensitivity) {
         val detector = ToneKeyDetector(
             detectorHz = s.extToneHz.toDouble(), sensitivity = s.micSensitivity,
-            onDown = { t -> if (sessionNow) { decoder.keyDown(t); keying = true } },
-            onUp = { t -> if (sessionNow) { decoder.keyUp(t); keying = false } },
+            onDown = { t -> if (listening) { decoder.keyDown(t); keying = true } },
+            onUp = { t -> if (listening) { decoder.keyUp(t); keying = false } },
             onLevel = { lvl -> micLevel = lvl }
         )
         if (listening) detector.start()
@@ -218,7 +262,7 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
     )
 
     Column(Modifier.fillMaxSize().background(Bg)) {
-        // 顶部
+        // —— 顶部栏（固定）——
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -233,11 +277,12 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
             ModeChipFast("左点右划", srcLabel)
         }
 
+        // —— 上半部分：可滚动内容（状态栏 + 目标 + 收报 + 结果）——
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth()
                 .verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)
         ) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
 
             // 状态栏
             Row(
@@ -249,9 +294,8 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
                 Box(
                     modifier = Modifier.size(10.dp).clip(CircleShape).background(
                         when {
-                            keying -> Green.copy(alpha = dotPulse)
-                            session -> Amber.copy(alpha = dotPulse)
                             listening -> Green.copy(alpha = dotPulse)
+                            keying -> Green.copy(alpha = dotPulse)
                             else -> Line
                         }
                     )
@@ -261,9 +305,8 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
                     Text(
                         text = when {
                             listening -> "监听外部键中…"
-                            session && keying -> "正在发码"
-                            session -> "发码中（空闲）"
-                            else -> "等待开始"
+                            keying -> "正在发码  ${if (currentElem != null) "→ ${if (currentElem == '.') "·" else "—"}" else ""}"
+                            else -> "按键即可发码（左点右划，IAMBIC B 双桨交替）"
                         },
                         color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.Medium
                     )
@@ -317,35 +360,14 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Pill("屏幕", s.inputSource == InputMode.SCREEN) {
-                        if (session) stopSession(); if (listening) listening = false
+                        if (listening) listening = false
                         app.prefs.update { it.copy(inputSource = InputMode.SCREEN) }
                     }
                     Pill("音频接口", s.inputSource == InputMode.AUDIO) {
-                        if (session) stopSession()
+                        if (listening) listening = false
                         app.prefs.update { it.copy(inputSource = InputMode.AUDIO) }
                     }
                 }
-            }
-
-            Spacer(Modifier.height(10.dp))
-
-            // 发码按键区 或 外部音频区
-            if (s.inputSource == InputMode.SCREEN) {
-                ScreenKeyBlock(
-                    session = session,
-                    iambicB = s.iambicB,
-                    onDownDot = { leverDown('.') },
-                    onUpDot = { leverUp('.') },
-                    onDownDash = { leverDown('-') },
-                    onUpDash = { leverUp('-') }
-                )
-            } else {
-                AudioInputBlock(
-                    listening = listening,
-                    micLevel = micLevel,
-                    micDenied = micDenied,
-                    onToggle = { toggleListening() }
-                )
             }
 
             Spacer(Modifier.height(10.dp))
@@ -360,7 +382,7 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("收报识别", color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp)
                     Spacer(Modifier.weight(1f))
-                    if (session) Text("实时识别中", color = Amber, fontSize = 10.sp)
+                    Text("实时识别中", color = Amber, fontSize = 10.sp)
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -379,16 +401,33 @@ fun SendScreen(app: AppState, onBack: () -> Unit) {
                 }
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
         }
 
-        // 底部操作条
+        // —— 中间：按键区（固定不滚动，始终可见）——
+        if (s.inputSource == InputMode.SCREEN) {
+            ScreenKeyBlock(
+                iambicB = s.iambicB,
+                currentElem = currentElem,
+                onDownDot = { leverDown('.') },
+                onUpDot = { leverUp('.') },
+                onDownDash = { leverDown('-') },
+                onUpDash = { leverUp('-') }
+            )
+        } else {
+            AudioInputBlock(
+                listening = listening,
+                micLevel = micLevel,
+                micDenied = micDenied,
+                onToggle = { toggleListening() }
+            )
+        }
+
+        // —— 底部操作条（固定）——
         BottomSendBar(
-            session = session,
-            listening = listening,
             hasResult = result != null,
             onRegenerate = { regenerateTarget() },
-            onStartStop = { if (session) stopSession() else startSession() },
+            onReset = { resetAll() },
             onEvaluate = { evaluate() },
             modifier = Modifier.padding(12.dp)
         )
@@ -413,8 +452,8 @@ private fun ModeChipFast(a: String, b: String) {
 
 @Composable
 private fun ScreenKeyBlock(
-    session: Boolean,
     iambicB: Boolean,
+    currentElem: Char?,
     onDownDot: () -> Unit, onUpDot: () -> Unit,
     onDownDash: () -> Unit, onUpDash: () -> Unit
 ) {
@@ -436,6 +475,19 @@ private fun ScreenKeyBlock(
                         .border(1.dp, Green.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp))
             }
+            // 实时发码指示器
+            Box(
+                modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                    .background(if (currentElem != null) Amber.copy(alpha = 0.2f) else Surface2)
+                    .border(1.dp, if (currentElem != null) Amber.copy(alpha = 0.5f) else Line, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "发: ${if (currentElem == '.') "·" else if (currentElem == '-') "—" else "—"}",
+                    color = if (currentElem != null) Amber else TextDim,
+                    fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold
+                )
+            }
         }
         Spacer(Modifier.height(10.dp))
         Row(
@@ -445,18 +497,18 @@ private fun ScreenKeyBlock(
             Keypad(
                 label = "·",
                 sub = "点  按住连续发点",
-                accent = Amber, modifier = Modifier.weight(1f).height(110.dp),
-                enabled = session, onDown = onDownDot, onUp = onUpDot
+                accent = Amber, modifier = Modifier.weight(1f).height(140.dp),
+                enabled = true, keypadKey = 1, onDown = onDownDot, onUp = onUpDot
             )
             Keypad(
                 label = "—",
                 sub = "划  按住连续发划",
-                accent = Green, modifier = Modifier.weight(1f).height(110.dp),
-                enabled = session, onDown = onDownDash, onUp = onUpDash
+                accent = Green, modifier = Modifier.weight(1f).height(140.dp),
+                enabled = true, keypadKey = 2, onDown = onDownDash, onUp = onUpDash
             )
         }
         Text(
-            text = if (!session) "点击下方『开始发码』后按键才激活" else "",
+            text = "双指同时按 = IAMBIC B 交替发码（设置中可开关）",
             color = TextDim, fontSize = 10.sp,
             modifier = Modifier.padding(top = 6.dp)
         )
@@ -596,11 +648,9 @@ private fun ResultBlock(r: SendResult, target: String, onReset: () -> Unit) {
 
 @Composable
 private fun BottomSendBar(
-    session: Boolean,
-    listening: Boolean,
     hasResult: Boolean,
     onRegenerate: () -> Unit,
-    onStartStop: () -> Unit,
+    onReset: () -> Unit,
     onEvaluate: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -612,33 +662,15 @@ private fun BottomSendBar(
     ) {
         ActionBtnS("↻", "换一组", TextDim, Modifier.padding(end = 4.dp)) { onRegenerate() }
 
-        val mainColor = when {
-            listening -> Red
-            session -> Red
-            else -> Amber
-        }
-        val mainLabel = when {
-            listening -> "停止监听"
-            session -> "结束发码"
-            else -> "开始发码"
-        }
         Box(
             modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
-                .background(mainColor).clickable { onStartStop() }.padding(vertical = 14.dp),
+                .background(Surface2).clickable { onReset() }.padding(vertical = 14.dp),
             contentAlignment = Alignment.Center
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = if (session || listening) "■" else "▶",
-                    color = if (session || listening) Color.White else Color(0xFF1A1200),
-                    fontSize = 18.sp, fontWeight = FontWeight.Bold
-                )
+                Text("⟳", color = TextMain, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    text = mainLabel,
-                    color = if (session || listening) Color.White else Color(0xFF1A1200),
-                    fontSize = 16.sp, fontWeight = FontWeight.Bold
-                )
+                Text("清空重置", color = TextMain, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
 

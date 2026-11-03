@@ -117,6 +117,11 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
         app.stats.reportCopy(acc)
     }
 
+    fun showAnswer() {
+        // 只显示答案，不自动判分
+        reveal = true
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -227,6 +232,7 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
             onRegenerate = { regenerate() },
             onPlay = { play() },
             onStop = { app.audio.stop() },
+            onShowAnswer = { showAnswer() },
             onCheck = { check() },
             modifier = Modifier.padding(12.dp)
         )
@@ -730,6 +736,7 @@ private fun BottomActionBar(
     onRegenerate: () -> Unit,
     onPlay: () -> Unit,
     onStop: () -> Unit,
+    onShowAnswer: () -> Unit,
     onCheck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -779,6 +786,16 @@ private fun BottomActionBar(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+
+        // 答案（只显示不判分）
+        if (!reveal) {
+            ActionBtn(
+                icon = "📖",
+                label = "答案",
+                color = Amber,
+                modifier = Modifier.padding(start = 4.dp)
+            ) { onShowAnswer() }
         }
 
         // 判分

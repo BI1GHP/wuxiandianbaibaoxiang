@@ -3,7 +3,8 @@ package com.wc.cwtrainer.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -152,7 +154,7 @@ fun LabeledSlider(
     }
 }
 
-/** 点/划按键，支持按下与抬起事件 */
+/** 点/划按键，支持多指独立按下抬起（每个 Keypad 只跟踪按下本按钮的 pointerId） */
 @Composable
 fun Keypad(
     label: String,
@@ -160,6 +162,7 @@ fun Keypad(
     accent: Color,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    keypadKey: Int = 0,
     onDown: () -> Unit,
     onUp: () -> Unit
 ) {
@@ -173,17 +176,24 @@ fun Keypad(
                 accent.copy(alpha = if (pressed) 0.95f else 0.42f),
                 RoundedCornerShape(18.dp)
             )
-            .pointerInput(enabled) {
+            // 每个 Keypad 用独立 key → Compose 创建独立 gesture detector，互不干扰
+            .pointerInput(enabled, keypadKey) {
                 if (!enabled) return@pointerInput
-                detectTapGestures(
-                    onPress = {
-                        pressed = true
-                        onDown()
-                        tryAwaitRelease()
-                        pressed = false
-                        onUp()
+                awaitEachGesture {
+                    // 按下：requireUnconsumed=false 让多个 Keypad 都能收到同一次多指点按
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val myPointerId = down.id  // 记住按下本按钮的那个手指 ID
+                    pressed = true
+                    onDown()
+                    // 等待 **我们的那个手指** 释放，忽略其他手指的事件
+                    while (true) {
+                        val ev = awaitPointerEvent(PointerEventPass.Main)
+                        val myChange = ev.changes.firstOrNull { it.id == myPointerId }
+                        if (myChange != null && !myChange.pressed) break
                     }
-                )
+                    pressed = false
+                    onUp()
+                }
             },
         contentAlignment = Alignment.Center
     ) {

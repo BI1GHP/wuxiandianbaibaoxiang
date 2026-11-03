@@ -108,6 +108,14 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
             accent = Color(0xFFFF9F6B)
         ) { onOpen(AppScreen.CONTEST) }
 
+        Spacer(Modifier.height(10.dp))
+        MenuCard(
+            index = "05",
+            title = "CW 翻译器",
+            desc = "实时解码外部电码 · 文本转 CW 播放",
+            accent = Color(0xFF7ED4FF)
+        ) { onOpen(AppScreen.TRANSLATOR) }
+
         Spacer(Modifier.height(18.dp))
         SectionCard {
             SectionTitle("练习统计")
