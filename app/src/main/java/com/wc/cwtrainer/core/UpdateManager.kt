@@ -27,6 +27,9 @@ import java.net.URL
  * - GitHub 发 Release + 上传 .apk asset
  * - Gitee 发 Release + 上传 .apk asset 或打 Tag 并挂载附件
  * - tag_name 格式统一 "V主.次.补丁"（如 V1.01, V1.02）
+ * - APK 附件名统一为 "CW_Baibaoxiang.apk"（无版本号、纯 ASCII）。
+ *   Release 资产会按 .apk 后缀匹配，所以其它名字也能识别；
+ *   但 Tags 兜底没有资产列表可查，只能拼出这个固定文件名，改名会导致 404。
  */
 object UpdateManager {
 
