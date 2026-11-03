@@ -16,8 +16,8 @@ android {
         applicationId = "com.wc.cwtrainer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "V1.1"
+        versionCode = 101
+        versionName = "V1.01"
     }
 
     buildTypes {
