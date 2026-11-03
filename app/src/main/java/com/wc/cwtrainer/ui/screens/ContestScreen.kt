@@ -396,10 +396,15 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             )
         }
 
-        Box {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF05080C))
+        ) {
             Canvas(
-                modifier = Modifier.fillMaxWidth().height(100.dp)
-                    .background(Color(0xFF05080C))
+                modifier = Modifier.fillMaxSize()
             ) {
                 val w = size.width
                 val h = size.height
@@ -439,7 +444,10 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             }
             // 叠加 LSB / USB 标签（用 Compose Text 而不是 Canvas drawText）
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 82.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("LSB", color = LedDim.copy(alpha = 0.6f), fontSize = 8.sp, fontFamily = FontFamily.Monospace)

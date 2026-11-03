@@ -221,7 +221,7 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
             SectionCard {
                 SectionTitle("关于")
                 Text(
-                    text = "无线电百宝箱  ${BuildConfig.VERSION_NAME}",
+                    text = "CW百宝箱  ${BuildConfig.VERSION_NAME}",
                     color = TextMain,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold

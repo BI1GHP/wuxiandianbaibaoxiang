@@ -1,5 +1,6 @@
 package com.wc.cwtrainer.ui.screens
 
+import android.media.MediaPlayer
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,12 +40,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
+import com.wc.cwtrainer.R
 import com.wc.cwtrainer.core.Fist
 import com.wc.cwtrainer.core.Morse
 import com.wc.cwtrainer.core.VoiceSpec
@@ -72,6 +77,56 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
     }
     var picked by remember { mutableStateOf<Char?>(null) }
     var feedback by remember { mutableStateOf<Boolean?>(null) }
+
+    // —— 每日一听：内置音频播放器 ——
+    val context = LocalContext.current
+    var audioPlaying by remember { mutableStateOf(false) }
+    var audioPosition by remember { mutableStateOf(0) }
+    var audioDuration by remember { mutableStateOf(1) }
+    val audioPlayer = remember { MediaPlayer.create(context, R.raw.daily_morse) }
+
+    DisposableEffect(audioPlayer) {
+        onDispose {
+            audioPlaying = false
+            audioPlayer?.release()
+        }
+    }
+
+    LaunchedEffect(audioPlayer) {
+        val mp = audioPlayer ?: return@LaunchedEffect
+        audioDuration = mp.duration.coerceAtLeast(1)
+        mp.setOnCompletionListener {
+            audioPlaying = false
+            audioPosition = 0
+        }
+    }
+
+    // 播放期间刷新进度
+    LaunchedEffect(audioPlaying, audioPlayer) {
+        val mp = audioPlayer ?: return@LaunchedEffect
+        while (audioPlaying) {
+            try {
+                audioPosition = mp.currentPosition
+                audioDuration = mp.duration.coerceAtLeast(1)
+            } catch (_: IllegalStateException) {
+            }
+            delay(200)
+        }
+    }
+
+    fun toggleAudio() {
+        val mp = audioPlayer ?: return
+        if (audioPlaying) {
+            mp.pause()
+            audioPlaying = false
+        } else {
+            app.audio.stop()
+            val total = mp.duration
+            if (total > 0 && mp.currentPosition >= total - 200) mp.seekTo(0)
+            mp.start()
+            audioPlaying = true
+        }
+    }
 
     fun playChar(c: Char) {
         app.audio.play(
@@ -110,7 +165,13 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
     }
 
     LaunchedEffect(tab) {
-        if (tab > 0) newQuestion()
+        if (tab > 0) {
+            newQuestion()
+            if (audioPlaying) {
+                audioPlayer?.pause()
+                audioPlaying = false
+            }
+        }
     }
     LaunchedEffect(question, tab) {
         if (tab == 1) playChar(question.answer)
@@ -163,6 +224,13 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
                 .padding(horizontal = 14.dp)
         ) {
             Spacer(Modifier.height(10.dp))
+            DailyAudioCard(
+                playing = audioPlaying,
+                positionMs = audioPosition,
+                durationMs = audioDuration,
+                onToggle = { toggleAudio() }
+            )
+            Spacer(Modifier.height(16.dp))
             when (tab) {
                 0 -> CodeTableContent(s, app) { playChar(it) }
                 else -> QuizContent(
@@ -180,6 +248,93 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+// ============ 每日一听音频播放器 ============
+
+@Composable
+private fun DailyAudioCard(
+    playing: Boolean,
+    positionMs: Int,
+    durationMs: Int,
+    onToggle: () -> Unit
+) {
+    val progress = (positionMs.toFloat() / durationMs.coerceAtLeast(1)).coerceIn(0f, 1f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Surface1)
+            .border(1.dp, Line, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        // 进度条上方文案
+        Text(
+            text = "动感电码，每日一听，巩固记忆",
+            color = Amber,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 1.sp
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Amber.copy(alpha = 0.16f))
+                    .border(1.dp, Amber.copy(alpha = 0.55f), CircleShape)
+                    .clickable { onToggle() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (playing) "❚❚" else "▶",
+                    color = Amber,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Surface2)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(progress)
+                            .fillMaxHeight()
+                            .background(Amber)
+                    )
+                }
+                Spacer(Modifier.height(5.dp))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = fmtTime(positionMs),
+                        color = TextDim,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = fmtTime(durationMs),
+                        color = TextDim,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun fmtTime(ms: Int): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    return "%d:%02d".format(total / 60, total % 60)
 }
 
 // ============ Tab 0: 码表速查 ============
@@ -215,7 +370,7 @@ private fun CodeGroup(title: String, chars: List<Char>, onPlay: (Char) -> Unit) 
     ) {
         Text(text = title, color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp)
         Spacer(Modifier.height(10.dp))
-        chars.chunked(4).forEach { row ->
+        chars.chunked(3).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -223,7 +378,7 @@ private fun CodeGroup(title: String, chars: List<Char>, onPlay: (Char) -> Unit) 
                 row.forEach { c ->
                     CodeTile(c, Modifier.weight(1f)) { onPlay(c) }
                 }
-                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -250,8 +405,10 @@ private fun CodeTile(c: Char, modifier: Modifier, onClick: () -> Unit) {
         Text(
             text = Morse.visualFor(c),
             color = Amber,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier.padding(top = 3.dp)
         )
     }

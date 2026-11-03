@@ -50,7 +50,7 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "无线电百宝箱",
+                    text = "CW百宝箱",
                     color = TextMain,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Black,

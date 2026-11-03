@@ -2,6 +2,8 @@ package com.wc.cwtrainer.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -134,8 +136,12 @@ private fun DecodeBlock(app: AppState) {
     var text by remember { mutableStateOf("") }
     var estWpm by remember { mutableStateOf(20.0) }
     var lastDotMs by remember { mutableStateOf(60.0) }
+    // 检测器实例：tick 需要用它的采样时钟，才能和按键事件严格对齐
+    var detector by remember { mutableStateOf<ToneKeyDetector?>(null) }
 
     val decoder = remember { MorseDecoder(s.wpm.toDouble()) }
+    // 音频线程的按键事件统一切到主线程处理，避免与 tick/清屏并发修改解码器
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     // 滚动状态 + 自动到底部
     val scrollState = rememberScrollState()
 
@@ -155,6 +161,12 @@ private fun DecodeBlock(app: AppState) {
     fun toggle() {
         if (listening) {
             listening = false
+            // 停止监听时把最后一个字母也解出来，避免末尾电码丢失。
+            // 放到主线程消息队列末尾执行，让检测线程补发的 keyUp 先处理完再结算
+            mainHandler.post {
+                decoder.commit(SystemClock.elapsedRealtime())
+                text = decoder.text
+            }
         } else {
             val ok = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
@@ -164,22 +176,28 @@ private fun DecodeBlock(app: AppState) {
     fun clearAll() {
         decoder.reset(); text = ""; estWpm = 20.0; lastDotMs = 60.0
     }
-
     DisposableEffect(listening, s.extToneHz, s.micSensitivity) {
-        val detector = ToneKeyDetector(
+        val det = ToneKeyDetector(
             detectorHz = s.extToneHz.toDouble(), sensitivity = s.micSensitivity,
-            onDown = { t -> decoder.keyDown(t) },
-            onUp = { t -> decoder.keyUp(t) },
-            onLevel = { lvl -> micLevel = lvl }
+            onDown = { t -> mainHandler.post { decoder.keyDown(t) } },
+            onUp = { t -> mainHandler.post { decoder.keyUp(t) } },
+            onLevel = { lvl -> mainHandler.post { micLevel = lvl } }
         )
-        if (listening) detector.start()
-        onDispose { detector.stop() }
+        detector = det
+        if (listening) det.start()
+        onDispose {
+            det.stop()
+            if (detector === det) detector = null
+        }
     }
 
     LaunchedEffect(listening) {
         while (listening) {
-            delay(40)
-            decoder.tick(SystemClock.elapsedRealtime())
+            // 25ms 结算一次：间隔判定更贴合实际节奏，快速电码不会被拆散
+            delay(25)
+            // 用检测端的采样时钟结算，主线程时钟超前缓冲区时间会把字母拆散
+            val t = detector?.nowMs ?: 0L
+            if (t > 0L) decoder.tick(t)
             text = decoder.text
             estWpm = decoder.estimatedWpm
             lastDotMs = decoder.avgDotMs
@@ -212,7 +230,7 @@ private fun DecodeBlock(app: AppState) {
                     )
                     Box(
                         modifier = Modifier.fillMaxWidth().height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)).background(Surface2).padding(top = 6.dp)
+                            .clip(RoundedCornerShape(3.dp)).background(Surface2)
                     ) {
                         Box(
                             modifier = Modifier.fillMaxWidth(micLevel.coerceIn(0.001f, 1f))
@@ -293,8 +311,11 @@ private fun KeyBlock(app: AppState) {
     var dashHeld by remember { mutableStateOf(false) }
     var keying by remember { mutableStateOf(false) }
     var currentElem by remember { mutableStateOf<Char?>(null) }
+    // 点/划“记忆”：轻点后即使已经抬起，也会完整发出一个元素，避免快速连点时丢失
+    var tapMemory by remember { mutableStateOf<Char?>(null) }
 
-    val decoder = remember { MorseDecoder(s.wpm.toDouble()) }
+    // 发码速度由 App 自己决定，初始码速可信
+    val decoder = remember { MorseDecoder(s.wpm.toDouble(), trustInitialWpm = true) }
     val scrollState = rememberScrollState()
 
     // —— 页面进入自动启动 SIDETONE ——
@@ -309,55 +330,38 @@ private fun KeyBlock(app: AppState) {
     // —— paddling 核心：2ms tick ——
     LaunchedEffect(Unit) {
         var lastSentElem: Char? = null
-        var paddleMem: Char? = null
         while (true) {
             val wpm = app.prefs.data.wpm
-            val unitMs = 1200.0 / wpm
+            val unitMs = 1200.0 / wpm.coerceAtLeast(5)
 
-            val target = when {
-                dotHeld && dashHeld -> {
-                    if (lastSentElem == null) '.' else if (lastSentElem == '.') '-' else '.'
-                }
+            // 当前应发的元素：优先按住的两个拨片，其次消费一次“轻点记忆”
+            val heldTarget = when {
+                dotHeld && dashHeld -> if (lastSentElem == '.') '-' else '.'
                 dotHeld -> '.'
                 dashHeld -> '-'
-                paddleMem != null -> paddleMem!!
                 else -> null
             }
+            val target = heldTarget ?: tapMemory
 
             if (target != null) {
-                paddleMem = null
+                if (heldTarget == null || tapMemory == target) tapMemory = null
+                if (dotHeld && dashHeld) tapMemory = null
                 lastSentElem = target
                 val durMs = if (target == '.') unitMs.toLong() else (unitMs * 3.0).toLong()
 
                 app.sidetone.gated = true
                 decoder.keyDown(SystemClock.elapsedRealtime())
 
-                val holdStart = SystemClock.elapsedRealtime()
-                var interrupted = false
-                while (SystemClock.elapsedRealtime() - holdStart < durMs) {
-                    delay(2)
-                    val needSwitch = when {
-                        target == '.' && dashHeld && !dotHeld -> true
-                        target == '-' && dotHeld && !dashHeld -> true
-                        else -> false
-                    }
-                    if (needSwitch) { interrupted = true; break }
-                }
+                // 元素必须发完整，不能被下一次点击截断
+                delay(durMs)
 
                 app.sidetone.gated = false
                 decoder.keyUp(SystemClock.elapsedRealtime())
 
-                if (!interrupted) {
-                    val gapStart = SystemClock.elapsedRealtime()
-                    while (SystemClock.elapsedRealtime() - gapStart < unitMs) {
-                        delay(2)
-                        if (dotHeld && !dashHeld) { paddleMem = '.'; break }
-                        if (dashHeld && !dotHeld) { paddleMem = '-'; break }
-                    }
-                }
+                // 元素间隔 1 单位，保证“点 + 划”能组成完整电码
+                delay(unitMs.toLong())
             } else {
                 lastSentElem = null
-                paddleMem = null
                 delay(2)
             }
         }
@@ -373,11 +377,11 @@ private fun KeyBlock(app: AppState) {
         }
     }
 
-    // —— 自动滚到底部 ——
+    // —— 自动滚到底部（瞬时滚动，避免每 40ms 触发动画造成界面跳动）——
     LaunchedEffect(sent) {
         val max = scrollState.maxValue
         if (max > 0 && scrollState.value != max) {
-            scrollState.animateScrollTo(max)
+            scrollState.scrollTo(max)
         }
     }
 
@@ -385,12 +389,15 @@ private fun KeyBlock(app: AppState) {
     LaunchedEffect(Unit) {
         while (true) {
             delay(60)
-            keying = app.sidetone.gated
+            keying = app.sidetone.gated || dotHeld || dashHeld
             currentElem = when { dotHeld -> '.'; dashHeld -> '-'; else -> null }
         }
     }
 
-    fun leverDown(c: Char) { if (c == '.') dotHeld = true else dashHeld = true }
+    fun leverDown(c: Char) {
+        tapMemory = c
+        if (c == '.') dotHeld = true else dashHeld = true
+    }
     fun leverUp(c: Char) { if (c == '.') dotHeld = false else dashHeld = false }
     fun clearAll() { decoder.reset(); sent = "" }
 
@@ -417,7 +424,7 @@ private fun KeyBlock(app: AppState) {
                     Text(
                         text = when {
                             keying -> "正在发码 ${if (currentElem != null) "→ ${if (currentElem == '.') "·" else "—"}" else ""}"
-                            else -> "左点右划 · 按住连续发码"
+                            else -> "左点右划 · 点划可连续组合"
                         },
                         color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.Medium
                     )
@@ -472,7 +479,7 @@ private fun KeyBlock(app: AppState) {
             }
 
             Spacer(Modifier.height(8.dp))
-            Text("提示：双指同时按 = IAMBIC B 交替发码。设置可切换手键/自动键模式。",
+            Text("提示：可连续轻点“·”“—”组合成完整电码；双指同时按 = IAMBIC B 交替发码。",
                 color = TextDim, fontSize = 11.sp, lineHeight = 16.sp)
             Spacer(Modifier.height(10.dp))
         }
@@ -579,7 +586,7 @@ private fun EncodeBlock(app: AppState) {
 
         Spacer(Modifier.height(10.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("速度 ${"%.0f".format(s.wpm)} WPM", Amber)
+            StatChip("速度 ${s.wpm} WPM", Amber)
             StatChip("音调 ${s.toneHz} Hz", Green)
             StatChip("时长 ${"%.1f".format(durationMs / 1000.0)} s", TextDim)
         }

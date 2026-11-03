@@ -78,10 +78,13 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
     var groupCount by remember { mutableStateOf(5) }
     var text by remember { mutableStateOf(Generators.groups(Generators.MIXED, 5, 5)) }
     var answer by remember { mutableStateOf(TextFieldValue("")) }
-    var reveal by remember { mutableStateOf(false) }
+    var showContent by remember { mutableStateOf(false) }   // 报文内容默认隐藏
     var accuracy by remember { mutableStateOf<Float?>(null) }
     var passCount by remember { mutableStateOf(0) }
     var showSettings by remember { mutableStateOf(false) }
+    var looping by remember { mutableStateOf(false) }
+    var loopSession by remember { mutableStateOf(0) }
+    var nextReplayIn by remember { mutableStateOf(0) }
 
     fun regenerate() {
         text = when (charset) {
@@ -91,35 +94,57 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
             else -> Generators.groups(Generators.MIXED, groupCount, 5)
         }
         answer = TextFieldValue("")
-        reveal = false
+        showContent = false
         accuracy = null
         passCount = 0
+        looping = false
+        nextReplayIn = 0
+        app.audio.stop()
     }
 
-    fun play() {
-        passCount++
-        app.audio.play(
-            voices = listOf(
-                VoiceSpec(
-                    text = text,
-                    fist = Fist(wpm = s.wpm.toDouble(), farnsworth = s.farnsworth.toDouble()),
-                    toneHz = s.toneHz.toDouble()
-                )
-            ),
-            volume = s.volume
-        )
+    fun startLoop() {
+        looping = true
+        loopSession++
+    }
+
+    fun stopLoop() {
+        looping = false
+        nextReplayIn = 0
+        app.audio.stop()
+    }
+
+    // 循环播放：一遍播完静默 5 秒后自动重播，直至点“停止”或离开页面
+    LaunchedEffect(loopSession) {
+        if (loopSession == 0) return@LaunchedEffect
+        while (looping) {
+            passCount++
+            app.audio.play(
+                voices = listOf(
+                    VoiceSpec(
+                        text = text,
+                        fist = Fist(wpm = s.wpm.toDouble(), farnsworth = s.farnsworth.toDouble()),
+                        toneHz = s.toneHz.toDouble()
+                    )
+                ),
+                volume = s.volume
+            )
+            while (app.audio.isPlaying) delay(100)
+            if (!looping) break
+            for (sec in 5 downTo 1) {
+                nextReplayIn = sec
+                delay(1000)
+                if (!looping) break
+            }
+            nextReplayIn = 0
+        }
+        nextReplayIn = 0
     }
 
     fun check() {
         val acc = TextScore.accuracy(text, answer.text)
         accuracy = acc
-        reveal = true
+        showContent = true
         app.stats.reportCopy(acc)
-    }
-
-    fun showAnswer() {
-        // 只显示答案，不自动判分
-        reveal = true
     }
 
     Column(
@@ -188,6 +213,8 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
             // 状态/播放动画区
             StatusBar(
                 isPlaying = app.audio.isPlaying,
+                looping = looping,
+                nextReplayIn = nextReplayIn,
                 passCount = passCount,
                 accuracy = accuracy
             )
@@ -198,20 +225,19 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
             CopyInput(
                 value = answer,
                 onValueChange = { answer = it },
-                enabled = !reveal
+                enabled = accuracy == null
             )
 
-            // 判分后：逐字比对
-            if (reveal) {
+            if (showContent) {
                 Spacer(Modifier.height(14.dp))
-                ResultCard(
+                ContentPanel(
                     target = text,
                     answer = answer.text,
-                    accuracy = accuracy ?: 0f,
+                    accuracy = accuracy,
                     passCount = passCount,
-                    onPlayAgain = { play() },
+                    onPlayAgain = { startLoop() },
                     onRegenerate = { regenerate() },
-                    onBackToInput = { reveal = false; accuracy = null }
+                    onBackToInput = { showContent = false; accuracy = null }
                 )
             } else {
                 Spacer(Modifier.height(14.dp))
@@ -227,12 +253,13 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
 
         // 底部操作条（固定）
         BottomActionBar(
-            isPlaying = app.audio.isPlaying,
-            reveal = reveal,
+            isPlaying = looping,
+            hasContent = showContent,
+            scored = accuracy != null,
             onRegenerate = { regenerate() },
-            onPlay = { play() },
-            onStop = { app.audio.stop() },
-            onShowAnswer = { showAnswer() },
+            onPlay = { startLoop() },
+            onStop = { stopLoop() },
+            onToggleContent = { showContent = !showContent },
             onCheck = { check() },
             modifier = Modifier.padding(12.dp)
         )
@@ -339,6 +366,8 @@ private fun SettingsPanel(
 @Composable
 private fun StatusBar(
     isPlaying: Boolean,
+    looping: Boolean,
+    nextReplayIn: Int,
     passCount: Int,
     accuracy: Float?
 ) {
@@ -368,6 +397,7 @@ private fun StatusBar(
                 .background(
                     when {
                         isPlaying -> Amber.copy(alpha = dotPulse)
+                        looping -> Cyan
                         accuracy != null -> Green
                         passCount > 0 -> Cyan
                         else -> Line
@@ -379,6 +409,8 @@ private fun StatusBar(
             Text(
                 text = when {
                     isPlaying -> "正在播放电报…"
+                    looping && nextReplayIn > 0 -> "第 $passCount 遍已播完 · ${nextReplayIn}s 后自动重播"
+                    looping -> "循环播放中…"
                     accuracy != null -> "判分完成"
                     passCount == 0 -> "准备就绪，点击播放开始"
                     else -> "第 $passCount 遍已播完"
@@ -389,8 +421,9 @@ private fun StatusBar(
             )
             Text(
                 text = when {
+                    isPlaying -> "循环播放：播完静默 5 秒后自动重播，点“停止”结束"
+                    looping && nextReplayIn > 0 -> "点“停止”可随时终止循环"
                     accuracy != null -> "准确率 ${"%.0f".format(accuracy * 100)}%"
-                    isPlaying -> "听抄时可随时暂停，多听几遍确保准确"
                     passCount == 0 -> "建议使用有线耳机，避免扬声器回授"
                     else -> "可以再听一遍或直接判分"
                 },
@@ -501,10 +534,10 @@ private fun HintBar(
 }
 
 @Composable
-private fun ResultCard(
+private fun ContentPanel(
     target: String,
     answer: String,
-    accuracy: Float,
+    accuracy: Float?,
     passCount: Int,
     onPlayAgain: () -> Unit,
     onRegenerate: () -> Unit,
@@ -522,18 +555,26 @@ private fun ResultCard(
             .border(1.dp, Line, RoundedCornerShape(16.dp))
             .padding(16.dp)
     ) {
-        // 准确率大字
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
                 Text(
-                    text = "准确率",
+                    text = "报文内容",
                     color = TextDim,
                     fontSize = 11.sp,
                     letterSpacing = 2.sp
                 )
+                Text(
+                    text = "答案核对已融合，默认隐藏",
+                    color = TextDim.copy(alpha = 0.7f),
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            if (accuracy != null) {
                 Text(
                     text = "${"%.0f".format(accuracy * 100)}%",
                     color = when {
@@ -541,59 +582,23 @@ private fun ResultCard(
                         accuracy >= 0.6f -> Amber
                         else -> Red
                     },
-                    fontSize = 40.sp,
+                    fontSize = 30.sp,
                     fontWeight = FontWeight.Black,
                     fontFamily = FontFamily.Monospace
                 )
-            }
-            Spacer(Modifier.weight(1f))
-            Column(horizontalAlignment = Alignment.End) {
+            } else {
                 Text(
-                    text = "$correct / ${normalizedTarget.length}",
-                    color = TextMain,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    text = "第 $passCount 遍抄收",
+                    text = "未判分",
                     color = TextDim,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    fontFamily = FontFamily.Monospace
                 )
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(Line)
-        )
-        Spacer(Modifier.height(14.dp))
-
-        // 逐字比对
-        Text(
-            text = "逐字比对",
-            color = TextDim,
-            fontSize = 11.sp,
-            letterSpacing = 2.sp
-        )
-        Spacer(Modifier.height(8.dp))
-
-        ComparisonStrip(target = normalizedTarget, answer = normalizedAnswer)
-
         Spacer(Modifier.height(12.dp))
 
-        // 标准答案 + 码表
-        Text(
-            text = "标准答案",
-            color = TextDim,
-            fontSize = 11.sp,
-            letterSpacing = 2.sp
-        )
-        Spacer(Modifier.height(8.dp))
+        // 报文原文
         Text(
             text = target,
             color = Green,
@@ -603,6 +608,48 @@ private fun ResultCard(
         )
         Spacer(Modifier.height(6.dp))
         MorseStrip(target = normalizedTarget)
+
+        Spacer(Modifier.height(14.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Line)
+        )
+        Spacer(Modifier.height(12.dp))
+
+        // 答案核对（融入报文内容，随面板一起显示）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "答案核对",
+                color = TextDim,
+                fontSize = 11.sp,
+                letterSpacing = 2.sp
+            )
+            Spacer(Modifier.weight(1f))
+            if (accuracy != null) {
+                Text(
+                    text = "${correct} / ${normalizedTarget.length}",
+                    color = TextMain,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            Text(
+                text = "第 $passCount 遍",
+                color = TextDim,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+
+        ComparisonStrip(target = normalizedTarget, answer = normalizedAnswer)
 
         Spacer(Modifier.height(16.dp))
 
@@ -732,11 +779,12 @@ private fun SmallAction(
 @Composable
 private fun BottomActionBar(
     isPlaying: Boolean,
-    reveal: Boolean,
+    hasContent: Boolean,
+    scored: Boolean,
     onRegenerate: () -> Unit,
     onPlay: () -> Unit,
     onStop: () -> Unit,
-    onShowAnswer: () -> Unit,
+    onToggleContent: () -> Unit,
     onCheck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -788,18 +836,16 @@ private fun BottomActionBar(
             }
         }
 
-        // 答案（只显示不判分）
-        if (!reveal) {
-            ActionBtn(
-                icon = "📖",
-                label = "答案",
-                color = Amber,
-                modifier = Modifier.padding(start = 4.dp)
-            ) { onShowAnswer() }
-        }
+        // 报文内容查看（含答案核对，默认隐藏）
+        ActionBtn(
+            icon = "📄",
+            label = "报文",
+            color = if (hasContent) Amber else Cyan,
+            modifier = Modifier.padding(start = 4.dp)
+        ) { onToggleContent() }
 
         // 判分
-        if (!reveal) {
+        if (!scored) {
             ActionBtn(
                 icon = "✓",
                 label = "判分",

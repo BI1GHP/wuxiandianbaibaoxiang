@@ -10,20 +10,24 @@ import android.util.Log
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
  * 通过麦克风/音频接口检测外部手键或自动键的通断。
  *
- * 使用方式：外部键控音源（电台侧音、带侧音输出的键控器、USB 声卡）接入手机
- * 3.5mm 麦克风输入或 USB 音频输入，APP 检测设定频率上的音调能量，转换为
- * key down / key up 事件。
- *
- * 识别优化（v2）：
- * - AudioSource.UNPROCESSED/VOICE_RECOGNITION 获取干净音频（避免 AGC/降噪）
- * - 极灵敏的音调检测：toneRatio 0.03 就触发
- * - 单帧确认（最快 ~11ms，FRAME=512）
- * - 自适应阈值：噪声底快追踪
+ * 识别优化（v4）：
+ * - 持续状态的二阶带通滤波器（RBJ，Q=4）提取目标音调能量，滤波状态跨帧保留，
+ *   不需要每帧重新收敛。
+ * - 用“带通能量”本身的自适应噪声底做主门限，而不是用总能量门限：
+ *   当 CW 音被环境噪声部分淹没时，总能量几乎不变，但目标频率上仍有明显能量，
+ *   这样才能把弱信号也识别出来（灵敏度提升的关键）。
+ * - 同时要求“带通/总能量比值”：纯 CW 音≈1，宽带噪声≈0.11。
+ *   比值门限还会跟随实测噪声比值自适应，因此麦克风底噪、点击声不会误触发。
+ * - 双帧去抖：连续 2 帧（约 12ms）有音调才算按下，连续 2 帧静音才算抬起，
+ *   并回填真实边沿时间，短噪声尖峰不会被解成 E/T。
+ * - 抬起门限保持足够滞回（约 1.4 倍噪底），避免元素尾部被噪声拖长导致点/划变形。
+ * - 帧长 256（约 5.8ms），时间分辨率更高，40 WPM 以上的快速电码也能完整分辨。
  */
 class ToneKeyDetector(
     private val detectorHz: Double,
@@ -34,8 +38,11 @@ class ToneKeyDetector(
 ) {
 
     private companion object {
-        const val SR = 44100
-        const val FRAME = 512   // 每帧 ~11.6ms
+        const val SR = 44100.0
+        const val FRAME = 256          // 每帧约 5.8ms
+        const val ON_FRAMES = 2        // 连续 2 帧确认按下
+        const val OFF_FRAMES = 2       // 连续 2 帧确认抬起
+        const val WARMUP_FRAMES = 20
     }
 
     private var record: AudioRecord? = null
@@ -44,21 +51,40 @@ class ToneKeyDetector(
     @Volatile
     private var running = false
 
+    /**
+     * 采样时钟下的当前时间，与 onDown / onUp 的时间戳同一时钟。
+     * 解码端的 tick 必须用它结算，否则主线程时钟比采样时钟超前一个缓冲区时间，
+     * 会把字母内部间隔算大，导致同一个字母被拆成 E / T。
+     */
+    @Volatile
+    var nowMs: Long = 0L
+        private set
+
+    // —— 带通滤波器系数（RBJ band-pass，Q=4，滤波器状态跨帧保留）——
+    private val w0 = 2.0 * PI * detectorHz / SR
+    private val alpha = sin(w0) / (2.0 * 4.0)
+    private val a0 = 1.0 + alpha
+    private val b0 = alpha / a0
+    private val b2 = -alpha / a0
+    private val a1 = -2.0 * cos(w0) / a0
+    private val a2 = (1.0 - alpha) / a0
+
     @SuppressLint("MissingPermission")
     fun start(): Boolean {
         if (running) return true
         val minBuf = AudioRecord.getMinBufferSize(
-            SR,
+            SR.toInt(),
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
-        val bufSize = max(minBuf * 2, SR / 4 * 2)
+        val bufSize = max(minBuf * 2, (SR / 4 * 2).toInt())
 
-        // 优先用 UNPROCESSED（最干净），fallback 到 VOICE_RECOGNITION，再 fallback MIC
+        // 优先 UNPROCESSED（最干净），其次 MIC；VOICE_RECOGNITION 常带语音降噪，
+        // 会把持续的 CW 音当噪声抑制，放在最后兜底。
         val sources = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            intArrayOf(MediaRecorder.AudioSource.UNPROCESSED, MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)
+            intArrayOf(MediaRecorder.AudioSource.UNPROCESSED, MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_RECOGNITION)
         } else {
-            intArrayOf(MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)
+            intArrayOf(MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_RECOGNITION)
         }
 
         var rec: AudioRecord? = null
@@ -68,7 +94,7 @@ class ToneKeyDetector(
                     .setAudioSource(src)
                     .setAudioFormat(
                         AudioFormat.Builder()
-                            .setSampleRate(SR)
+                            .setSampleRate(SR.toInt())
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                             .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                             .build()
@@ -120,86 +146,106 @@ class ToneKeyDetector(
         var framesRead = 0L
         val startedAt = SystemClock.elapsedRealtime()
 
-        // 启动时快速建立噪声底（前 20 帧）
-        var noiseFloor = 0.004f
-        var warmup = 20
+        // 目标音调上的自适应噪声底（带通后的 RMS）与实测噪声比值
+        var bandFloor = 0.0002f
+        var noiseRatio = 0.10f
+        var warmup = WARMUP_FRAMES
 
         var isOn = false
-        var onCount = 0
-        var offCount = 0
+        var onRun = 0
+        var offRun = 0
         var emittedDown = false
         var levelTick = 0
+
+        // 滤波器状态（跨帧保留）
+        var x1 = 0.0
+        var x2 = 0.0
+        var y1 = 0.0
+        var y2 = 0.0
+
+        val sens = sensitivity.coerceIn(0f, 1f)
+        // 灵敏度越高 → 门限倍数越小、比值要求越松
+        val onFactor = 2.2f - 0.9f * sens
+        val holdFactor = 1.6f - 0.4f * sens
+        val ratioGate = 0.20f - 0.05f * sens
 
         try {
             while (running) {
                 val read = rec.read(buf, 0, buf.size)
                 if (read <= 0) continue
                 framesRead += read
-                val now = startedAt + framesRead * 1000L / SR
+                val now = startedAt + framesRead * 1000L / SR.toLong()
+                nowMs = now
+                val frameMs = read * 1000.0 / SR
 
-                // —— RMS 能量（整帧）——
+                // 去直流后的总能量
+                var sum = 0.0
                 var sumSq = 0.0
+                // 带通后的能量
+                var bpSq = 0.0
+
                 for (i in 0 until read) {
-                    val x = buf[i].toDouble()
-                    sumSq += x * x
+                    val x0 = buf[i] / 32768.0
+                    sum += x0
+                    sumSq += x0 * x0
+
+                    val y0 = b0 * x0 + b2 * x2 - a1 * y1 - a2 * y2
+                    bpSq += y0 * y0
+                    x2 = x1
+                    x1 = x0
+                    y2 = y1
+                    y1 = y0
                 }
-                val meanSq = sumSq / read
-                val level = sqrt(meanSq) / 32768.0
 
-                // —— 音调能量检测（IIR 窄带滤波器，Q ≈ 20）——
-                var s1 = 0.0
-                var s2 = 0.0
-                val w = 2.0 * PI * detectorHz / SR
-                val coeff = 2.0 * cos(w)
-                for (i in 0 until read) {
-                    val s0 = buf[i].toDouble() + coeff * s1 - s2
-                    s2 = s1
-                    s1 = s0
+                val dc = sum / read
+                val meanSq = (sumSq / read - dc * dc).coerceAtLeast(0.0)
+                val level = sqrt(meanSq)
+                val bpLevel = sqrt(bpSq / read)
+                val ratio = bpLevel / (level + 1e-9)
+
+                val bandGateOn = max(bandFloor * onFactor, 1.5e-4f)
+                val bandGateHold = max(bandFloor * holdFactor, 1.0e-4f)
+                // 比值门限跟随实测噪声比值浮动：底噪大时自动收紧，安静时放宽
+                val onRatio = max(ratioGate, noiseRatio * 1.6f)
+                val holdRatio = max(ratioGate * 0.85f, noiseRatio * 1.3f)
+                val lit = if (isOn) {
+                    bpLevel > bandGateHold && ratio > holdRatio
+                } else {
+                    bpLevel > bandGateOn && ratio > onRatio
                 }
-                val tonePower = (s1 * s1 + s2 * s2 - coeff * s1 * s2) / (read.toDouble() * read.toDouble())
-                val toneRatio = tonePower / (meanSq + 1e-9)
-
-                // —— 自适应阈值（非常灵敏）——
-                // sensitivity 0→1 线性映射阈值
-                val sensFactor = 2.0f - sensitivity * 1.5f   // sens=0 → 2.0; sens=1 → 0.5
-                val rmsThreshold = max(noiseFloor * sensFactor, 0.0025f)
-                val toneThreshold = 0.03   // toneRatio > 0.03（3% 能量在目标频率）
-
-                // 双条件触发：RMS + 音调占比
-                val lit = level > rmsThreshold && toneRatio > toneThreshold
 
                 if (lit) {
-                    onCount++
-                    offCount = 0
-                    if (!isOn) noiseFloor = noiseFloor * 0.9f + level.toFloat() * 0.1f
+                    onRun++
+                    offRun = 0
                 } else {
-                    offCount++
-                    onCount = 0
+                    offRun++
+                    onRun = 0
+                    // 只在确认静音时学习噪声底，信号期间不会把门限抬高
                     if (!isOn) {
-                        // 快速噪声底追踪（只在静音时）
-                        noiseFloor = noiseFloor * 0.94f + level.toFloat() * 0.06f
+                        bandFloor = max(bandFloor * 0.9f + bpLevel.toFloat() * 0.1f, 5e-5f)
+                        noiseRatio = noiseRatio * 0.9f + ratio.toFloat() * 0.1f
                     }
                 }
+
                 if (warmup > 0) {
                     warmup--
-                    if (!lit) noiseFloor = noiseFloor * 0.92f + level.toFloat() * 0.08f
                     continue
                 }
 
-                // —— 单帧确认就触发（最快 ~11.6ms）——
-                if (!isOn && onCount >= 1) {
+                // —— 双帧去抖，回填真实边沿 ——
+                if (!isOn && onRun >= ON_FRAMES) {
                     isOn = true
                     emittedDown = true
-                    onDown(now)
-                } else if (isOn && offCount >= 2) {
+                    onDown(now - ((onRun - 1) * frameMs).toLong())
+                } else if (isOn && offRun >= OFF_FRAMES) {
                     isOn = false
-                    if (emittedDown) onUp(now)
+                    if (emittedDown) onUp(now - ((offRun - 1) * frameMs).toLong())
                     emittedDown = false
                 }
 
-                // —— 电平回调（每 2 帧 ~23ms）——
+                // —— 电平回调（每 4 帧约 23ms，够界面用，又不至于频繁重组）——
                 levelTick++
-                if (levelTick >= 2) {
+                if (levelTick >= 4) {
                     levelTick = 0
                     onLevel(level.toFloat().coerceIn(0f, 1f))
                 }
@@ -207,7 +253,7 @@ class ToneKeyDetector(
         } catch (e: Exception) {
             if (running) Log.e("ToneKeyDetector", "loop failed", e)
         } finally {
-            if (isOn && emittedDown) onUp(SystemClock.elapsedRealtime())
+            if (isOn && emittedDown) onUp(if (nowMs > 0L) nowMs else SystemClock.elapsedRealtime())
         }
     }
 }
