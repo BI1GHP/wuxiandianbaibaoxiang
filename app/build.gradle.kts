@@ -8,10 +8,11 @@ plugins {
 }
 
 // 正式签名信息放在仓库根目录的 keystore.properties（已在 .gitignore 中排除，切勿提交）
-//   storeFile=keystore/cw-release.jks
+//   storeFile=keystore/cw-release.p12
 //   storePassword=xxxx
 //   keyAlias=cwbaibaoxiang
 //   keyPassword=xxxx
+//   storeType=PKCS12        （可选，默认 PKCS12；老 JKS 文件写 JKS）
 val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) FileInputStream(f).use { load(it) }
@@ -42,6 +43,8 @@ android {
                 storePassword = keystoreProps.getProperty("storePassword")
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
+                // keytool 9+ 默认生成 PKCS12；若改用旧 JKS 文件，在 properties 里写 storeType=JKS
+                storeType = keystoreProps.getProperty("storeType", "PKCS12")
             }
         }
     }
