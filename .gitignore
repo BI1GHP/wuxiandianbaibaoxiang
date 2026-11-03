@@ -1,0 +1,25 @@
+# Gradle / Android build
+.gradle/
+build/
+**/build/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.log
+
+# Android Studio
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+
+# Kotlin cache
+.kotlin/
+
+# Gradle wrapper artifacts (keep gradlew/gradlew, ignore zip/jar)
+gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
