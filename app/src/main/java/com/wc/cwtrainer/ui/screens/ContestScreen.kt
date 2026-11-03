@@ -1,5 +1,6 @@
 package com.wc.cwtrainer.ui.screens
 
+import android.os.SystemClock
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -317,33 +318,59 @@ private fun StatusDot(label: String, color: Color, on: Boolean) {
 @Composable
 private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
     // 缓存频谱能量分布（64 个 bin）
-    var bins by remember { mutableStateOf(List(64) { 0f }) }
-    // 滚动的瀑布历史（最近 40 帧）
     var waterfall by remember { mutableStateOf(List(40) { List(64) { 0f } }) }
 
-    // 驱动刷新
+    // 驱动刷新 —— 自己模拟 CW 信号（不依赖 sidetone，因为 CwAudio 和 Sidetone 独立）
     LaunchedEffect(playing) {
+        // 模拟一个正在发码的电台：随机生成"on/off"片段
+        var simulateOn = false
+        var nextSwitchAt = SystemClock.elapsedRealtime() + Random.nextLong(60, 180)
+        var frameCount = 0L
+
         while (playing) {
-            kotlinx.coroutines.delay(50)
+            kotlinx.coroutines.delay(45)
+            frameCount++
+            val now = SystemClock.elapsedRealtime()
+            if (now >= nextSwitchAt) {
+                simulateOn = !simulateOn
+                // 点 = 60~120ms, 划 = 180~360ms, 间隙 = 60~300ms
+                nextSwitchAt = now + if (simulateOn) {
+                    // on 状态：随机点或划
+                    if (Random.nextBoolean()) Random.nextLong(70, 140) else Random.nextLong(180, 320)
+                } else {
+                    // off 状态：间隙
+                    Random.nextLong(60, 280)
+                }
+            }
+
             // 生成新的频谱数据
-            val targetBin = 32  // 侧音频率对准中间偏右
+            val targetBin = 32
             val newBins = FloatArray(64)
             for (i in 0 until 64) {
-                // 噪声底：小随机值
-                val noise = Random.nextFloat() * 0.08f + 0.02f
-                // 如果在侧音频率附近 + 正在 keying → 亮带
                 val dist = kotlin.math.abs(i - targetBin)
-                val signal = if (keying && dist <= 3) {
-                    (0.8f - dist * 0.2f) * pulse + Random.nextFloat() * 0.1f
-                } else if (dist <= 3 && playing) {
-                    // 播放但不在 keying（间隙期）：弱信号
-                    Random.nextFloat() * 0.1f
-                } else { 0f }
+                val noise = Random.nextFloat() * 0.06f + 0.015f
+                val signal = if (simulateOn && dist <= 4) {
+                    // 发码中：亮带，高斯衰减
+                    val gaussian = kotlin.math.exp(-(dist.toDouble() * dist.toDouble()) / 6.0)
+                    (0.55f + Random.nextFloat() * 0.40f) * gaussian.toFloat()
+                } else {
+                    0f
+                }
                 newBins[i] = (noise + signal).coerceIn(0f, 1f)
             }
-            bins = newBins.toList()
+            // 模拟 FM 漂移：让亮带中心偶尔左右晃一点（真实电台会这样）
+            if (frameCount % 15 == 0L) {
+                // 每隔一阵加一点左右偏移的 ghost
+                val shiftTarget = if (Random.nextBoolean()) targetBin - 1 else targetBin + 1
+                for (i in 0 until 64) {
+                    val dist = kotlin.math.abs(i - shiftTarget)
+                    if (dist <= 3 && simulateOn) {
+                        newBins[i] = (newBins[i] + 0.1f * kotlin.math.exp(-dist.toDouble() * dist.toDouble() / 4.0).toFloat()).coerceIn(0f, 1f)
+                    }
+                }
+            }
             // 瀑布滚动：新帧在底部，旧帧上移
-            waterfall = (waterfall.dropLast(1) + listOf(bins)).toList()
+            waterfall = (waterfall.dropLast(1) + listOf(newBins.toList())).toList()
         }
     }
 
