@@ -10,6 +10,11 @@ local.properties
 *.class
 *.log
 
+# 正式签名：密钥与口令绝不入库
+keystore.properties
+*.jks
+*.keystore
+
 # Android Studio
 .idea/
 *.iml
