@@ -247,6 +247,7 @@ private fun CheckForUpdateButton() {
     var message by remember { mutableStateOf("🔄 点击检查更新") }
     var newVersion by remember { mutableStateOf<String?>(null) }
     var apkUrl by remember { mutableStateOf<String?>(null) }
+    var updateSource by remember { mutableStateOf<String?>(null) }
     val versionCode = remember { BuildConfig.VERSION_NAME.filter { it.isDigit() }.toIntOrNull() ?: 0 }
 
     // 下载并安装
@@ -316,15 +317,16 @@ private fun CheckForUpdateButton() {
                             if (result.hasUpdate && result.info != null) {
                                 newVersion = result.info.versionName
                                 apkUrl = result.info.apkUrl
+                                updateSource = result.info.source
                                 status = "new"
                                 val sz = "%.1f".format(result.info.apkSizeBytes / 1024.0 / 1024.0)
-                                message = "⬇ 发现 ${result.info.versionName}（${sz} MB），点击下载"
+                                message = "⬇ 发现 ${result.info.versionName}（${sz} MB · ${result.info.source}），点击下载"
                             } else if (result.error != null) {
                                 status = "error"
                                 message = "❌ ${result.error}"
                             } else {
                                 status = "up_to_date"
-                                message = "✅ 已是最新版本"
+                                message = "✅ 已是最新版本（源: ${result.info?.source ?: "-"}）"
                             }
                         }
                     }
