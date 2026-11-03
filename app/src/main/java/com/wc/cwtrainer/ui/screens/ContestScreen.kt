@@ -119,6 +119,13 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             volume = s.volume, noiseLevel = s.noiseLevel
         ) { playing = false }
     }
+    fun replay() {
+        stop(); playing = true
+        app.audio.play(
+            voices = listOf(VoiceSpec(text = script, fist = station.cwFist, toneHz = s.toneHz.toDouble())),
+            volume = s.volume, noiseLevel = s.noiseLevel
+        ) { playing = false }
+    }
     fun checkIt() {
         check = ContestGen.check(station, callIn.text, rstIn.text, serialIn.text)
         check?.let { app.stats.reportContest(it.score) }
@@ -180,7 +187,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         BottomPanelBar(
             playing = playing, hasResult = check != null,
             onNewStation = { newStation() }, onPlay = { play() },
-            onStop = { stop() }, onCheck = { checkIt() },
+            onReplay = { replay() }, onStop = { stop() }, onCheck = { checkIt() },
             modifier = Modifier.padding(12.dp)
         )
     }
@@ -672,7 +679,7 @@ private fun CheckLine(label: String, ok: Boolean, correct: String) {
 @Composable
 private fun BottomPanelBar(
     playing: Boolean, hasResult: Boolean,
-    onNewStation: () -> Unit, onPlay: () -> Unit,
+    onNewStation: () -> Unit, onPlay: () -> Unit, onReplay: () -> Unit,
     onStop: () -> Unit, onCheck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -720,6 +727,8 @@ private fun BottomPanelBar(
             }
         }
 
+        Spacer(Modifier.width(2.dp))
+        SmallAction("🔁", "重听", if (playing) LedDim else LedCyan, enabled = !playing) { onReplay() }
         Spacer(Modifier.width(2.dp))
         if (!hasResult) {
             SmallAction("✓", "判分", if (playing) LedDim else LedGreen, enabled = !playing) { onCheck() }

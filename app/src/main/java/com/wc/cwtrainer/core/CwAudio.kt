@@ -28,12 +28,48 @@ data class VoiceSpec(
     val gain: Float = 1f
 )
 
-/** 将多路电报声混合渲染为 PCM，可模拟同频多台（pileup）与噪声 */
+/**
+ * 将多路电报声混合渲染为 PCM，可模拟：
+ * - 同频多台（pileup）
+ * - 静态低通噪声
+ * - 传播衰落（QSB 秒级慢衰落 + Flutter 毫秒级快衰落）
+ *
+ * 真实 HF 传播模型：
+ * - QSB（fading）：5~15s 周期，深度 6~10dB，Rayleigh 分布
+ * - Flutter（快衰落）：几十毫秒级，小幅度叠加
+ * - 背景噪声：白噪声 + 低通滤波（模拟大气噪声）
+ */
 object CwRenderer {
     const val SR = 44100
     private const val MAX_MS = 60_000
 
     private data class Item(val startMs: Int, val ms: Int, val on: Boolean)
+
+    /**
+     * 生成一个随时间变化的衰落因子（0~1）。
+     * @param phase 随机相位偏移，让每次不同
+     * @param qsbDepth QSB 深度（0~1，越大衰落越深）
+     */
+    private fun fadingFactor(phase: Double, qsbDepth: Float = 0.6f): DoubleArray {
+        // 生成 10 秒的衰落曲线，每 10ms 一个采样点
+        val numPoints = 1000
+        val out = DoubleArray(numPoints)
+        for (i in 0 until numPoints) {
+            val t = i * 0.01  // 秒
+            // QSB 慢衰落：3 个不同频率的正弦叠加（模拟多径干涉）
+            val qsb = (
+                sin(2.0 * PI * 0.15 * t + phase) * 0.5 +    // 15s 周期
+                sin(2.0 * PI * 0.22 * t + phase * 1.7) * 0.3 +  // ~9s
+                sin(2.0 * PI * 0.35 * t + phase * 2.3) * 0.2   // ~6s
+                ) * qsbDepth
+            // Flutter 快衰落：高频小幅抖动
+            val flutter = sin(2.0 * PI * 2.5 * t + phase * 5.0) * 0.12 +
+                          sin(2.0 * PI * 4.0 * t + phase * 7.0) * 0.08
+            // 归一化到 0~1
+            out[i] = ((1.0 + qsb + flutter).coerceAtLeast(0.15)).coerceAtMost(1.2)
+        }
+        return out
+    }
 
     fun render(voices: List<VoiceSpec>, noiseLevel: Float): ShortArray {
         var totalMs = 0
@@ -51,9 +87,15 @@ object CwRenderer {
         val total = (((cappedMs.toLong() + 120L) * SR) / 1000L).toInt()
         val buf = FloatArray(total)
 
-        for ((voice, items) in timelines) {
+        // 生成每个 voice 独立的衰落曲线
+        val fadingCurves = voices.map { fadingFactor(Math.random() * 1000.0, qsbDepth = 0.55f) }
+
+        for ((vi, voice) in voices.withIndex()) {
             val w = 2.0 * PI * voice.toneHz / SR
-            for (item in items) {
+            val fade = fadingCurves[vi]
+            val fadeStep = fade.size.toDouble() / cappedMs   // 每 ms 对应几个 fade 采样
+
+            for ((idx, item) in timelines[vi].second.withIndex()) {
                 if (!item.on) continue
                 val startSample = item.startMs.toLong() * SR / 1000L
                 if (startSample >= total) continue
@@ -61,17 +103,26 @@ object CwRenderer {
                 if (n <= 0) continue
                 val start = startSample.toInt()
                 val ramp = min(n / 2, (5L * SR / 1000L).toInt())
+
+                // 预计算每个 sample 的衰落值（每 10ms 采一个点，中间线性插值）
+                val startMsOfSample = item.startMs
                 for (i in 0 until n) {
                     val env = when {
                         ramp > 1 && i < ramp -> i.toFloat() / ramp
                         ramp > 1 && i >= n - ramp -> (n - i).toFloat() / ramp
                         else -> 1f
                     }
-                    buf[start + i] += (sin(w * (start + i)) * env * voice.gain).toFloat()
+                    // 衰落插值：从 fade 曲线取
+                    val tMs = startMsOfSample + i * 1000.0 / SR
+                    val fadeIdx = (tMs * fadeStep).toInt().coerceIn(0, fade.size - 1)
+                    val fadeVal = fade[fadeIdx]
+
+                    buf[start + i] += (sin(w * (start + i)) * env * voice.gain * fadeVal).toFloat()
                 }
             }
         }
 
+        // —— 背景噪声（静态低通）——
         if (noiseLevel > 0f) {
             val rnd = Random(20261103)
             var lp = 0f
@@ -158,14 +209,8 @@ class CwAudio(context: Context) {
             } catch (e: Exception) {
                 Log.e("CwAudio", "play failed", e)
             } finally {
-                try {
-                    t?.stop()
-                } catch (_: Exception) {
-                }
-                try {
-                    t?.release()
-                } catch (_: Exception) {
-                }
+                try { t?.stop() } catch (_: Exception) {}
+                try { t?.release() } catch (_: Exception) {}
                 if (track === t) track = null
                 if (token == myToken) isPlaying = false
             }
@@ -176,15 +221,8 @@ class CwAudio(context: Context) {
         token++
         job?.cancel()
         job = null
-        try {
-            track?.pause()
-            track?.flush()
-        } catch (_: Exception) {
-        }
-        try {
-            track?.release()
-        } catch (_: Exception) {
-        }
+        try { track?.pause(); track?.flush() } catch (_: Exception) {}
+        try { track?.release() } catch (_: Exception) {}
         track = null
         isPlaying = false
     }
