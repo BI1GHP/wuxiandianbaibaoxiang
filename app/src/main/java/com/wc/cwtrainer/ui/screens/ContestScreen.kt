@@ -317,59 +317,56 @@ private fun StatusDot(label: String, color: Color, on: Boolean) {
  */
 @Composable
 private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
-    // 缓存频谱能量分布（64 个 bin）
+    // 缓存频谱能量分布（64 个 bin × 40 行历史）
     var waterfall by remember { mutableStateOf(List(40) { List(64) { 0f } }) }
 
-    // 驱动刷新 —— 自己模拟 CW 信号（不依赖 sidetone，因为 CwAudio 和 Sidetone 独立）
-    LaunchedEffect(playing) {
-        // 模拟一个正在发码的电台：随机生成"on/off"片段
+    // —— 永远在动：不管 playing 与否都刷 ——
+    LaunchedEffect(Unit) {
         var simulateOn = false
-        var nextSwitchAt = SystemClock.elapsedRealtime() + Random.nextLong(60, 180)
+        var nextSwitchAt = SystemClock.elapsedRealtime() + Random.nextLong(40, 120)
         var frameCount = 0L
+        var driftOffset = 0.0   // 频率漂移：±3 bin 慢慢晃
 
-        while (playing) {
-            kotlinx.coroutines.delay(45)
+        while (true) {
+            kotlinx.coroutines.delay(40)
             frameCount++
             val now = SystemClock.elapsedRealtime()
+
+            // —— 控制"发码"节奏 ——
             if (now >= nextSwitchAt) {
                 simulateOn = !simulateOn
-                // 点 = 60~120ms, 划 = 180~360ms, 间隙 = 60~300ms
                 nextSwitchAt = now + if (simulateOn) {
-                    // on 状态：随机点或划
-                    if (Random.nextBoolean()) Random.nextLong(70, 140) else Random.nextLong(180, 320)
+                    if (Random.nextBoolean()) Random.nextLong(60, 130) else Random.nextLong(160, 320)
                 } else {
-                    // off 状态：间隙
-                    Random.nextLong(60, 280)
+                    Random.nextLong(50, 260)
                 }
             }
 
-            // 生成新的频谱数据
-            val targetBin = 32
+            // —— 频率漂移：正弦缓慢左右晃 ±2 bin ——
+            driftOffset = kotlin.math.sin(frameCount / 25.0) * 2.0
+
+            // —— 生成频谱 ——
+            val baseBin = 32 + driftOffset
+            val intensityMul = if (playing) 1.2f else 0.45f   // 播放时更亮
             val newBins = FloatArray(64)
+
             for (i in 0 until 64) {
-                val dist = kotlin.math.abs(i - targetBin)
-                val noise = Random.nextFloat() * 0.06f + 0.015f
-                val signal = if (simulateOn && dist <= 4) {
-                    // 发码中：亮带，高斯衰减
-                    val gaussian = kotlin.math.exp(-(dist.toDouble() * dist.toDouble()) / 6.0)
-                    (0.55f + Random.nextFloat() * 0.40f) * gaussian.toFloat()
+                val dist = kotlin.math.abs(i - baseBin)
+                val noise = (Random.nextFloat() * 0.09f + 0.04f).toDouble()
+
+                val signal: Double = if (simulateOn) {
+                    val g = kotlin.math.exp(-dist * dist / 8.0)
+                    (0.65 + Random.nextFloat() * 0.35f) * g * intensityMul
+                } else if (playing && dist <= 2) {
+                    (Random.nextFloat() * 0.06f).toDouble()
                 } else {
-                    0f
+                    0.0
                 }
-                newBins[i] = (noise + signal).coerceIn(0f, 1f)
+
+                newBins[i] = (noise + signal).coerceIn(0.0, 1.0).toFloat()
             }
-            // 模拟 FM 漂移：让亮带中心偶尔左右晃一点（真实电台会这样）
-            if (frameCount % 15 == 0L) {
-                // 每隔一阵加一点左右偏移的 ghost
-                val shiftTarget = if (Random.nextBoolean()) targetBin - 1 else targetBin + 1
-                for (i in 0 until 64) {
-                    val dist = kotlin.math.abs(i - shiftTarget)
-                    if (dist <= 3 && simulateOn) {
-                        newBins[i] = (newBins[i] + 0.1f * kotlin.math.exp(-dist.toDouble() * dist.toDouble() / 4.0).toFloat()).coerceIn(0f, 1f)
-                    }
-                }
-            }
-            // 瀑布滚动：新帧在底部，旧帧上移
+
+            // —— 瀑布滚动：新帧在底部，旧帧上移 ——
             waterfall = (waterfall.dropLast(1) + listOf(newBins.toList())).toList()
         }
     }
@@ -405,14 +402,14 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
                 // 画瀑布：从底部（最新）到顶部（最旧）
                 for (rowIdx in 0 until 40) {
                     val row = waterfall[39 - rowIdx]  // 旧的在上
-                    val rowAlpha = 1f - rowIdx * 0.02f  // 越旧越暗
+                    val rowAlpha = 1f - rowIdx * 0.025f  // 越旧越暗
                     for (binIdx in 0 until 64) {
                         val energy = row[binIdx]
-                        if (energy > 0.01f) {
+                        if (energy > 0.005f) {
                             val color = when {
-                                energy > 0.7f -> LedAmber.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
-                                energy > 0.4f -> LedGreen.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
-                                else -> LedGreen.copy(alpha = (energy * 0.4f * rowAlpha))
+                                energy > 0.75f -> LedAmber.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
+                                energy > 0.45f -> LedGreen.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
+                                else -> LedGreen.copy(alpha = ((energy * 1.5f).coerceAtMost(0.6f) * rowAlpha))
                             }
                             drawRect(
                                 color = color,
