@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,7 +78,6 @@ fun TranslatorScreen(app: AppState, onBack: () -> Unit) {
     val s = app.prefs.data
     var tab by remember { mutableStateOf(TranslatorTab.DECODE) }
 
-    // 页面切换时停掉所有声音，避免串扰
     DisposableEffect(tab) {
         app.sidetone.stop()
         onDispose { app.sidetone.stop() }
@@ -87,7 +87,6 @@ fun TranslatorScreen(app: AppState, onBack: () -> Unit) {
         ScreenHeader("CW 翻译器", onBack)
         Spacer(Modifier.height(8.dp))
 
-        // Tab 切换条
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
                 .clip(RoundedCornerShape(12.dp))
@@ -137,6 +136,16 @@ private fun DecodeBlock(app: AppState) {
     var lastDotMs by remember { mutableStateOf(60.0) }
 
     val decoder = remember { MorseDecoder(s.wpm.toDouble()) }
+    // 滚动状态 + 自动到底部
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(text) {
+        // 每次 text 变化自动滚到底部
+        val max = scrollState.maxValue
+        if (max > 0 && scrollState.value != max) {
+            scrollState.animateScrollTo(max)
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -146,12 +155,14 @@ private fun DecodeBlock(app: AppState) {
     fun toggle() {
         if (listening) {
             listening = false
-            decoder.reset(); text = ""; estWpm = 20.0; lastDotMs = 60.0
         } else {
             val ok = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
             if (ok) listening = true else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+    fun clearAll() {
+        decoder.reset(); text = ""; estWpm = 20.0; lastDotMs = 60.0
     }
 
     DisposableEffect(listening, s.extToneHz, s.micSensitivity) {
@@ -206,9 +217,19 @@ private fun DecodeBlock(app: AppState) {
                         Box(
                             modifier = Modifier.fillMaxWidth(micLevel.coerceIn(0.001f, 1f))
                                 .height(6.dp).clip(RoundedCornerShape(3.dp))
-                                .background(if (micLevel > 0.03f) Green else Line)
+                                .background(if (micLevel > 0.02f) Green else Line)
                         )
                     }
+                }
+                // 清屏按钮（监听中也能点）
+                Box(
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .background(Surface2).border(1.dp, Line, RoundedCornerShape(8.dp))
+                        .clickable { clearAll() }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("清屏", color = TextDim, fontSize = 11.sp)
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -232,25 +253,32 @@ private fun DecodeBlock(app: AppState) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("解码结果", color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.weight(1f))
-                Text(text = if (listening) "● 实时" else "○ 停止",
-                    color = if (listening) Green else TextDim, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text(
+                    text = if (listening) "● 实时" else "○ 停止",
+                    color = if (listening) Green else TextDim, fontSize = 10.sp, fontFamily = FontFamily.Monospace
+                )
             }
             Spacer(Modifier.height(10.dp))
             Box(
                 modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF06080C)).border(1.dp, Line, RoundedCornerShape(8.dp)).padding(12.dp)
+                    .background(Color(0xFF06080C))
+                    .border(1.dp, Line, RoundedCornerShape(8.dp))
+                    .padding(12.dp).verticalScroll(scrollState)
             ) {
                 Text(
                     text = text.ifEmpty { "等待接收电码…" },
                     color = if (listening) Green else TextDim,
-                    fontSize = 26.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, letterSpacing = 2.sp
+                    fontSize = 26.sp, fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 2.sp,
+                    lineHeight = 34.sp
                 )
             }
         }
 
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "将电台侧音 / 外部键控器 / USB 声卡输出接到手机麦克风输入。APP 自动检测设定频率上的音调能量，自适应码速。",
+            text = "将电台侧音 / 外部键控器 / USB 声卡输出接到手机麦克风输入。检测频率在设置中可改。",
             color = TextDim, fontSize = 11.sp, lineHeight = 16.sp
         )
     }
@@ -265,20 +293,20 @@ private fun KeyBlock(app: AppState) {
     var dashHeld by remember { mutableStateOf(false) }
     var keying by remember { mutableStateOf(false) }
     var currentElem by remember { mutableStateOf<Char?>(null) }
-    var sidetoneOn by remember { mutableStateOf(true) }
 
     val decoder = remember { MorseDecoder(s.wpm.toDouble()) }
+    val scrollState = rememberScrollState()
 
     // —— 页面进入自动启动 SIDETONE ——
     LaunchedEffect(Unit) {
         app.audio.stop(); app.speaker.stop()
         app.sidetone.frequency = s.toneHz.toDouble()
         app.sidetone.volume = s.volume
-        if (sidetoneOn) app.sidetone.start()
+        app.sidetone.start()
     }
     DisposableEffect(Unit) { onDispose { app.sidetone.stop() } }
 
-    // —— paddling 核心：2ms tick，不写 Compose state ——
+    // —— paddling 核心：2ms tick ——
     LaunchedEffect(Unit) {
         var lastSentElem: Char? = null
         var paddleMem: Char? = null
@@ -288,7 +316,6 @@ private fun KeyBlock(app: AppState) {
 
             val target = when {
                 dotHeld && dashHeld -> {
-                    // IAMBIC B 交替
                     if (lastSentElem == null) '.' else if (lastSentElem == '.') '-' else '.'
                 }
                 dotHeld -> '.'
@@ -346,21 +373,26 @@ private fun KeyBlock(app: AppState) {
         }
     }
 
-    // —— UI 节流 tick：60ms —— 只驱动显示状态 ——
+    // —— 自动滚到底部 ——
+    LaunchedEffect(sent) {
+        val max = scrollState.maxValue
+        if (max > 0 && scrollState.value != max) {
+            scrollState.animateScrollTo(max)
+        }
+    }
+
+    // —— UI 节流 tick：60ms ——
     LaunchedEffect(Unit) {
         while (true) {
             delay(60)
             keying = app.sidetone.gated
-            currentElem = when {
-                dotHeld -> '.'
-                dashHeld -> '-'
-                else -> null
-            }
+            currentElem = when { dotHeld -> '.'; dashHeld -> '-'; else -> null }
         }
     }
 
     fun leverDown(c: Char) { if (c == '.') dotHeld = true else dashHeld = true }
     fun leverUp(c: Char) { if (c == '.') dotHeld = false else dashHeld = false }
+    fun clearAll() { decoder.reset(); sent = "" }
 
     val dotPulse by rememberInfiniteTransition(label = "k-led").animateFloat(
         initialValue = 0.3f, targetValue = 1f,
@@ -372,23 +404,19 @@ private fun KeyBlock(app: AppState) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
             Spacer(Modifier.height(6.dp))
 
-            // —— 状态栏 ——
+            // 状态栏
             Row(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                     .background(Surface1).border(1.dp, Line, RoundedCornerShape(12.dp))
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier.size(10.dp).clip(CircleShape).background(
-                        if (keying) Green.copy(alpha = dotPulse) else Line
-                    )
-                )
+                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (keying) Green.copy(alpha = dotPulse) else Line))
                 Spacer(Modifier.width(10.dp))
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text(
                         text = when {
-                            keying -> "正在发码  ${if (currentElem != null) "→ ${if (currentElem == '.') "·" else "—"}" else ""}"
+                            keying -> "正在发码 ${if (currentElem != null) "→ ${if (currentElem == '.') "·" else "—"}" else ""}"
                             else -> "左点右划 · 按住连续发码"
                         },
                         color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.Medium
@@ -398,7 +426,6 @@ private fun KeyBlock(app: AppState) {
                         color = TextDim, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp)
                     )
                 }
-                Spacer(Modifier.weight(1f))
                 Text(
                     text = if (s.iambicB) "IAMBIC B" else "单点单划",
                     color = if (s.iambicB) Green else TextDim, fontSize = 10.sp,
@@ -411,34 +438,43 @@ private fun KeyBlock(app: AppState) {
 
             Spacer(Modifier.height(10.dp))
 
-            // —— 收报显示 ——
+            // 收报显示 + 清屏
             Column(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(14.dp))
                     .background(Color(0xFF0A0D11)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("实时解码", color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
                     Spacer(Modifier.weight(1f))
-                    Text(
-                        text = "清空", color = Amber, fontSize = 10.sp,
-                        modifier = Modifier.clickable {
-                            decoder.reset(); sent = ""
-                        }.padding(horizontal = 8.dp, vertical = 2.dp)
-                    )
+                    Box(
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                            .background(Surface2).border(1.dp, Line, RoundedCornerShape(8.dp))
+                            .clickable { clearAll() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) { Text("清屏", color = TextDim, fontSize = 10.sp) }
                 }
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = sent.ifEmpty { "— 等待发码 —" },
-                    color = if (sent.isEmpty()) TextDim else TextMain,
-                    fontSize = 24.sp, fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold, lineHeight = 32.sp
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF06080C))
+                        .border(1.dp, Line, RoundedCornerShape(8.dp))
+                        .padding(12.dp).verticalScroll(scrollState)
+                ) {
+                    Text(
+                        text = sent.ifEmpty { "— 等待发码 —" },
+                        color = if (sent.isEmpty()) TextDim else TextMain,
+                        fontSize = 24.sp, fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold, lineHeight = 32.sp,
+                        letterSpacing = 1.5.sp
+                    )
+                }
             }
 
-            Spacer(Modifier.height(10.dp))
-            Text("提示：双指同时按 = IAMBIC B 交替发码。在设置中可切换手键/自动键模式。",
+            Spacer(Modifier.height(8.dp))
+            Text("提示：双指同时按 = IAMBIC B 交替发码。设置可切换手键/自动键模式。",
                 color = TextDim, fontSize = 11.sp, lineHeight = 16.sp)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
         }
 
         // —— 固定按键区 ——
@@ -501,7 +537,8 @@ private fun EncodeBlock(app: AppState) {
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                .background(Surface1).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
+                .background(Surface1).border(1.dp, Line, RoundedCornerShape(14.dp))
+                .padding(14.dp)
         ) {
             Text("要转换的文本", color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(8.dp))

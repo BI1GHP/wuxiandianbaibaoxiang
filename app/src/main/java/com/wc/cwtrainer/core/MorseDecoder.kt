@@ -5,6 +5,12 @@ import kotlin.math.max
 /**
  * 从按键通断时间自适应解码，用于发码练习的识别与评分。
  * 适用于手键、自动键以及外部音频接口检测出的通断事件。
+ *
+ * 修复点：
+ * - flush 阈值 2.5 → 2.0 unit（更快识别字母）
+ * - isDash 阈值 1.85 → 2.2 unit（更宽容，短划也能识别成 dash）
+ * - 单位自适应更积极（alpha 0.18 → 0.25）
+ * - commit() 在 tick 里也被触发（防止末尾字母丢失）
  */
 class MorseDecoder(initialWpm: Double = 20.0) {
 
@@ -13,7 +19,6 @@ class MorseDecoder(initialWpm: Double = 20.0) {
 
     private var downAt: Long = -1L
     private var lastUpAt: Long = -1L
-    private var letterEndAt: Long = -1L
     private var spaceAdded = false
     private var elements = StringBuilder()
     private val out = StringBuilder()
@@ -34,7 +39,6 @@ class MorseDecoder(initialWpm: Double = 20.0) {
     fun reset() {
         downAt = -1
         lastUpAt = -1
-        letterEndAt = -1
         spaceAdded = false
         elements = StringBuilder()
         out.clear()
@@ -53,13 +57,20 @@ class MorseDecoder(initialWpm: Double = 20.0) {
         downAt = -1
         lastUpAt = now
         if (dur <= 0) return
-        val isDash = dur > unit * 1.85
+        // dash 判断：超过 2.2 个 unit 就算 dash（原来 1.85 太严）
+        val isDash = dur > unit * 2.2
         elements.append(if (isDash) '-' else '.')
         if (!isDash) {
             dotStats.add(dur)
-            // 自适应点长（保留初值权重，避免过快收敛）
-            unit = unit * 0.82 + dur * 0.18
-            if (unit < 18.0) unit = 18.0
+            // 更积极的自适应：保留 75% 新值（原来 18%）
+            unit = unit * 0.75 + dur * 0.25
+            if (unit < 15.0) unit = 15.0
+            if (unit > 300.0) unit = 300.0
+        } else {
+            // dash 也用来校正（dash ≈ 3 * dot）
+            val impliedDot = dur / 3.0
+            dotStats.add(impliedDot.toInt())
+            unit = unit * 0.75 + impliedDot * 0.25
         }
     }
 
@@ -68,10 +79,12 @@ class MorseDecoder(initialWpm: Double = 20.0) {
         if (downAt >= 0) return
         if (lastUpAt < 0) return
         val gap = now - lastUpAt
-        if (elements.isNotEmpty() && gap > unit * 2.5) {
+        // 更快 flush 字母：2.0 unit（原来 2.5）
+        if (elements.isNotEmpty() && gap > unit * 2.0) {
             flushLetter()
         }
-        if (elements.isEmpty() && out.isNotEmpty() && !spaceAdded && gap > unit * 6.0) {
+        // 单词间空格：5.0 unit（原来 6.0）
+        if (elements.isEmpty() && out.isNotEmpty() && !spaceAdded && gap > unit * 5.0) {
             out.append(' ')
             spaceAdded = true
         }
@@ -86,7 +99,7 @@ class MorseDecoder(initialWpm: Double = 20.0) {
         val code = elements.toString()
         elements = StringBuilder()
         if (code.isEmpty()) return
-        letterEndAt = lastUpAt
+        lastUpAt = -1  // ← 关键！flush 后重置，防止重复触发
         out.append(Morse.charFor(code) ?: Morse.UNKNOWN)
     }
 
