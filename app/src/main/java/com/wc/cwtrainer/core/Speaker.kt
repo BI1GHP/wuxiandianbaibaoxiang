@@ -3,7 +3,6 @@ package com.wc.cwtrainer.core
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -11,7 +10,15 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
-/** 系统 TTS 封装：用于模仿各国口音的 SSB 播报 */
+/**
+ * 系统 TTS 封装：返回 Result 告知调用方实际用了哪个语言播放，
+ * 以便上层 UI 准确显示"实际播报国家"。
+ *
+ * 选语言策略：
+ *  1. 目标 locale 在设备可用列表中 → 直接用
+ *  2. 目标不可用 → 回退到同语系（de-DE → de-AT）或英语 en-US
+ *  3. TTS 引擎完全不可用 → Result.failure
+ */
 class Speaker(context: Context) {
 
     private var tts: TextToSpeech? = null
@@ -24,12 +31,25 @@ class Speaker(context: Context) {
     var available by mutableStateOf(false)
         private set
 
+    /** 当前设备 TTS 引擎可用的语言标签集合（设备启动后填充） */
+    var availableLocales by mutableStateOf(setOf<String>())
+        private set
+
     init {
         tts = TextToSpeech(context.applicationContext) { status ->
             engineOk = status == TextToSpeech.SUCCESS
             available = engineOk
             if (engineOk) {
                 runCatching { tts?.setOnUtteranceProgressListener(listener) }
+                // 收集设备实际可用的语言
+                runCatching {
+                    val all = tts?.availableLanguages ?: return@runCatching
+                    val set = mutableSetOf<String>()
+                    for (loc in all) {
+                        if (loc != Locale.ROOT) set.add(loc.toLanguageTag())
+                    }
+                    availableLocales = set
+                }
             }
             if (!ready.isCompleted) ready.complete(engineOk)
         }
@@ -52,18 +72,31 @@ class Speaker(context: Context) {
         }
     }
 
-    suspend fun speak(text: String, localeTag: String, rate: Float, pitch: Float): Boolean {
+    /**
+     * 播报文本。返回 [Result.success] 时附带实际使用的语言标签。
+     * Result.failure 表示 TTS 引擎或语言不可用。
+     */
+    suspend fun speak(text: String, wantedTag: String, rate: Float, pitch: Float): Result<String> {
         withTimeoutOrNull(3000) { ready.await() }
-        val engine = tts ?: return false
-        if (!engineOk) return false
+        val engine = tts ?: return Result.failure(IllegalStateException("TTS not initialized"))
+        if (!engineOk) return Result.failure(IllegalStateException("No TTS engine available"))
 
-        val wanted = Locale.forLanguageTag(localeTag)
-        val lang = if (runCatching { engine.isLanguageAvailable(wanted) }.getOrDefault(-1) >= 0) {
-            wanted
-        } else {
-            Locale.US
+        // 策略：目标可用 → 目标；同语系可用 → 同语系；否则 en-US；再失败 → 失败
+        val wanted = Locale.forLanguageTag(wantedTag)
+        val engineSupports = { loc: Locale ->
+            runCatching { engine.isLanguageAvailable(loc) }.getOrDefault(-1) >= 0
         }
-        runCatching { engine.setLanguage(lang) }
+
+        val actualLocale: Locale = when {
+            engineSupports(wanted) -> wanted
+            // 同语系兜底：比如 de-DE 不可用就找任意 de_*
+            engineSupports(Locale(wanted.language)) -> Locale(wanted.language)
+            engineSupports(Locale.US) -> Locale.US
+            else -> return Result.failure(IllegalStateException("No supported TTS locale"))
+        }
+        val actualTag = actualLocale.toLanguageTag()
+
+        runCatching { engine.setLanguage(actualLocale) }
         engine.setSpeechRate(rate.coerceIn(0.5f, 2.0f))
         engine.setPitch(pitch.coerceIn(0.5f, 2.0f))
 
@@ -76,10 +109,11 @@ class Speaker(context: Context) {
         if (res != TextToSpeech.SUCCESS) {
             pending = null
             pendingId = null
-            return false
+            return Result.failure(IllegalStateException("speak() rejected by engine"))
         }
         val ok = withTimeoutOrNull(45_000) { deferred.await() }
-        return ok ?: true
+        return if (ok != false) Result.success(actualTag)
+        else Result.failure(IllegalStateException("utterance failed"))
     }
 
     fun stop() {
@@ -94,6 +128,4 @@ class Speaker(context: Context) {
         runCatching { tts?.shutdown() }
         tts = null
     }
-
-    fun engineAvailable(): Boolean = engineOk
 }
