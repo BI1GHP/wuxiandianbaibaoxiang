@@ -27,9 +27,9 @@ import java.net.URL
  * - GitHub 发 Release + 上传 .apk asset
  * - Gitee 发 Release + 上传 .apk asset 或打 Tag 并挂载附件
  * - tag_name 格式统一 "V主.次.补丁"（如 V1.01, V1.02）
- * - APK 附件名统一为 "CW_Baibaoxiang.apk"（无版本号、纯 ASCII）。
- *   Release 资产会按 .apk 后缀匹配，所以其它名字也能识别；
- *   但 Tags 兜底没有资产列表可查，只能拼出这个固定文件名，改名会导致 404。
+ * - APK 附件名统一 "CW百宝箱_{tag}.apk"（如 CW百宝箱_V1.03.apk）。
+ *   Release 资产按 .apk 后缀匹配，改名也能识别；Tags 兜底没有资产列表可查，
+ *   只能按这个约定拼下载地址，附件名不一致会 404。
  */
 object UpdateManager {
 
@@ -237,8 +237,9 @@ object UpdateManager {
         val tag = tagObj.optString("name", "")
         if (tag.isBlank()) return null
         val htmlUrl = "https://gitee.com/$OWNER/$REPO/releases/tag/$tag"
-        // 直接拼下载链接：Gitee 下载附件格式
-        val apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/CW_Baibaoxiang.apk"
+        // 按发版约定拼下载链接：CW百宝箱_V1.03.apk（中文名需百分号编码）
+        val apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/" +
+            Uri.encode("CW百宝箱_$tag.apk")
         return Parsed(tag = tag, htmlUrl = htmlUrl, body = "", apkUrl = apkUrl, apkSize = 0L)
     }
 
