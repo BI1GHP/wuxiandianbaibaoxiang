@@ -70,6 +70,40 @@ private val LedRed = Color(0xFFFF4444)
 private val LedCyan = Color(0xFF00D4FF)
 private val LedDim = Color(0xFF3A4250)
 
+// —— 瀑布参数：96 个频率 bin × 40 行历史 ——
+private const val WF_BINS = 96
+private const val WF_ROWS = 40
+
+// 热力图色标：能量 0→1 连续渐变（蓝黑 → 深蓝 → 青 → 绿 → 黄绿 → 琥珀）
+private val HeatStops: List<Pair<Float, Color>> = listOf(
+    0.00f to Color(0xFF04060A),
+    0.14f to Color(0xFF08213A),
+    0.30f to Color(0xFF0B3D58),
+    0.44f to Color(0xFF0E6B62),
+    0.58f to Color(0xFF20A96B),
+    0.74f to Color(0xFF93CE4A),
+    0.90f to Color(0xFFFFD24A),
+    1.00f to LedAmber
+)
+
+private fun mixColor(a: Color, b: Color, f: Float) = Color(
+    red = a.red + (b.red - a.red) * f,
+    green = a.green + (b.green - a.green) * f,
+    blue = a.blue + (b.blue - a.blue) * f,
+    alpha = a.alpha + (b.alpha - a.alpha) * f
+)
+
+/** 预生成 96 级连续热力色，避免绘制时反复插值 */
+private fun buildHeatLut(levels: Int = 96): Array<Color> = Array(levels) { idx ->
+    val e = idx / (levels - 1).toFloat()
+    var hi = 1
+    while (hi < HeatStops.size - 1 && HeatStops[hi].first < e) hi++
+    val lo = hi - 1
+    val span = HeatStops[hi].first - HeatStops[lo].first
+    val f = if (span <= 0f) 1f else ((e - HeatStops[lo].first) / span).coerceIn(0f, 1f)
+    mixColor(HeatStops[lo].second, HeatStops[hi].second, f)
+}
+
 @Composable
 fun ContestScreen(app: AppState, onBack: () -> Unit) {
     val s = app.prefs.data
@@ -355,22 +389,27 @@ private fun StatusDot(label: String, color: Color, on: Boolean) {
 /**
  * 模拟频谱瀑布（Canvas 绘制）。
  * 真实电台的 waterfall 是 FFT + 滚动，这里用简化模型：
- * - 64 个频率 bin，左到右对应频谱低端到高端
- * - 播放 + 侧音(keying)时，目标频率附近有一条亮带
- * - 噪声底用暗绿色，侧音时变成琥珀色 + 绿色混合
- * - 每 50ms 刷新一次，加入随机扰动让画面"活起来"
+ * - 96 个频率 bin，左到右对应频谱低端到高端
+ * - 每一帧都是一行新采样的噪声，旧行整体下移 → 纹理持续向下流动
+ * - 发码时，目标频率附近叠加一条高斯亮带
+ * - 噪声底用连续热力图配色（不是几档离散色），细微能量差也能看出颗粒感
+ * - 每 50ms 刷新一次
  */
 @Composable
 private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
-    // 缓存频谱能量分布（64 个 bin × 40 行历史）
-    var waterfall by remember { mutableStateOf(List(40) { List(64) { 0f } }) }
+    // 缓存频谱能量分布（96 个 bin × 40 行历史）
+    var waterfall by remember { mutableStateOf(List(WF_ROWS) { List(WF_BINS) { 0f } }) }
+    // 预生成的连续热力色表，绘制时按能量查表
+    val heatLut = remember { buildHeatLut() }
 
     // —— 永远在动：不管 playing 与否都刷 ——
     LaunchedEffect(Unit) {
         var simulateOn = false
         var nextSwitchAt = SystemClock.elapsedRealtime() + Random.nextLong(40, 120)
         var frameCount = 0L
-        var driftOffset = 0.0   // 频率漂移：±2 bin 慢慢晃
+        var driftOffset = 0.0   // 频率漂移：±3 bin 慢慢晃
+        // 上一行的噪声底，用于给噪声留一点向下拖尾
+        val prevNoise = FloatArray(WF_BINS) { 0.2f }
 
         while (true) {
             kotlinx.coroutines.delay(50)   // 20 行/秒，40 行历史 = 2 秒滚动全程
@@ -387,30 +426,39 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
                 }
             }
 
-            // —— 频率漂移：正弦缓慢左右晃 ±2 bin ——
-            driftOffset = kotlin.math.sin(frameCount / 30.0) * 2.0
+            // —— 频率漂移：正弦缓慢左右晃 ±3 bin ——
+            driftOffset = kotlin.math.sin(frameCount / 30.0) * 3.0
 
             // —— 生成频谱 ——
-            // 关键：噪声用平滑演化场（正弦叠加），行间有空间连续性，
-            // 滚动时纹理跟着移动 → 肉眼能看到"瀑布在流"
-            // （纯随机噪声每行独立，滚动前后统计特征一样，看起来就是静止的）
+            // 关键：噪声必须"每行都不一样"，滚动才有向下流动的动感。
+            // 之前只用缓慢演化的正弦场，相邻行几乎一样，再被离散色档压成同一个颜色，
+            // 整块看起来是静止的单色，只剩中间一条亮带。
+            // 现在改为：散粒噪声（每行重采样）为主 + 慢变起伏做底噪包络，
+            // 并保留 30% 的上一行值形成向下拖尾。
             val t = frameCount * 0.08
-            val baseBin = 32 + driftOffset
+            val baseBin = (WF_BINS / 2).toDouble() + driftOffset
             val intensityMul = if (playing) 1.0f else 0.4f
-            val newBins = FloatArray(64)
+            val newBins = FloatArray(WF_BINS)
 
-            for (i in 0 until 64) {
+            for (i in 0 until WF_BINS) {
                 val x = i.toDouble()
-                // 平滑噪声底：三个空间频率的正弦叠加，随时间缓慢演化
+                // 慢变底噪包络：三个空间频率的正弦叠加，让噪声成片起伏
                 val smooth = (kotlin.math.sin(x * 0.35 + t) * 0.5 +
                               kotlin.math.sin(x * 0.17 - t * 0.7) * 0.3 +
                               kotlin.math.sin(x * 0.55 + t * 0.35) * 0.2 + 1.0) / 2.0
-                var energy = 0.10 + smooth * 0.14 + Random.nextFloat() * 0.04
+                // 散粒噪声：每行、每个 bin 重新采样，行间差异大 → 肉眼看到纹理在流
+                val grain = Random.nextFloat()
+                // 偶发强噪声尖峰（天电/静电）
+                val burst = if (Random.nextFloat() < 0.02f) Random.nextFloat() * 0.25f else 0f
+                val raw = 0.05f + smooth.toFloat() * 0.12f + grain * 0.34f
+
+                prevNoise[i] = prevNoise[i] * 0.30f + raw * 0.70f
+                var energy = (prevNoise[i] + burst).toDouble()
 
                 // 信号亮带：高斯包络，发码时亮起
                 if (simulateOn) {
                     val dist = kotlin.math.abs(i - baseBin)
-                    val g = kotlin.math.exp(-dist * dist / 10.0)
+                    val g = kotlin.math.exp(-dist * dist / 22.0)
                     energy += (0.55 + Random.nextFloat() * 0.45) * g * intensityMul
                 }
                 newBins[i] = energy.coerceIn(0.0, 1.0).toFloat()
@@ -453,25 +501,17 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             ) {
                 val w = size.width
                 val h = size.height
-                val binW = w / 64f
-                val rowH = h / 40f
+                val binW = w / WF_BINS.toFloat()
+                val rowH = h / WF_ROWS.toFloat()
 
-                // 真实 SDR 热力图配色：每个 bin 都绘制（背景也有色），确保填满整框
-                fun heatColor(e: Float): Color = when {
-                    e < 0.10f -> Color(0xFF0A1420)                       // 深底蓝黑（背景也填色）
-                    e < 0.22f -> Color(0xFF0D2B45)                       // 深蓝
-                    e < 0.38f -> Color(0xFF0E5A5A)                       // 青
-                    e < 0.58f -> Color(0xFF1FA36C)                       // 绿
-                    e < 0.78f -> Color(0xFF8FC94E)                       // 黄绿
-                    else -> LedAmber                                     // 琥珀亮信号
-                }
-
-                // 画瀑布：最新行在顶部（index 39），旧行向下滚动
-                for (rowIdx in 0 until 40) {
-                    val row = waterfall[39 - rowIdx]
-                    for (binIdx in 0 until 64) {
+                // 画瀑布：最新行在顶部，旧行向下滚动
+                for (rowIdx in 0 until WF_ROWS) {
+                    val row = waterfall[WF_ROWS - 1 - rowIdx]
+                    for (binIdx in 0 until WF_BINS) {
+                        val e = row[binIdx]
+                        val lutIdx = (e * (heatLut.size - 1)).toInt().coerceIn(0, heatLut.size - 1)
                         drawRect(
-                            color = heatColor(row[binIdx]),
+                            color = heatLut[lutIdx],
                             topLeft = Offset(binIdx * binW, rowIdx * rowH),
                             size = androidx.compose.ui.geometry.Size(binW + 1f, rowH + 1f)  // +1 消除亚像素缝隙
                         )
@@ -479,7 +519,7 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
                 }
 
                 // 中心频率参考线
-                val centerX = 32 * binW + binW / 2f
+                val centerX = (WF_BINS / 2) * binW + binW / 2f
                 drawLine(
                     color = LedCyan.copy(alpha = 0.3f),
                     start = Offset(centerX, 0f),
