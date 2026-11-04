@@ -61,6 +61,7 @@ import com.wc.cwtrainer.ui.Surface1
 import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
+import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -133,7 +134,7 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
             voices = listOf(
                 VoiceSpec(
                     text = c.toString(),
-                    fist = Fist(wpm = s.wpm.toDouble()),
+                    fist = Fist(wpm = s.learnWpm.toDouble()),
                     toneHz = s.toneHz.toDouble()
                 )
             ),
@@ -200,6 +201,11 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
                 modifier = Modifier.padding(start = 6.dp)
             )
             Spacer(Modifier.weight(1f))
+            WpmAdjuster(
+                wpm = s.learnWpm,
+                onWpm = { app.prefs.update { p -> p.copy(learnWpm = it) } }
+            )
+            Spacer(Modifier.width(8.dp))
             val correctRate = if (app.stats.learnTotal == 0) "—" else
                 String.format("%.0f%%", app.stats.learnCorrect.toFloat() / app.stats.learnTotal * 100f)
             ModeChip("正确率 $correctRate", "${app.stats.learnTotal} 题")

@@ -123,7 +123,7 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
                 voices = listOf(
                     VoiceSpec(
                         text = text,
-                        fist = Fist(wpm = s.wpm.toDouble(), farnsworth = s.farnsworth.toDouble()),
+                        fist = Fist(wpm = s.copyWpm.toDouble(), farnsworth = s.farnsworth.toDouble()),
                         toneHz = s.toneHz.toDouble()
                     )
                 ),
@@ -178,7 +178,7 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
                 modifier = Modifier.padding(start = 6.dp)
             )
             Spacer(Modifier.weight(1f))
-            ModeChip(charsetText(charset), "${s.wpm} WPM")
+            ModeChip(charsetText(charset), "${s.copyWpm} WPM")
             Spacer(Modifier.width(8.dp))
             IconButton(
                 label = if (showSettings) "收起" else "设置",
@@ -191,11 +191,11 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
             SettingsPanel(
                 charset = charset,
                 groupCount = groupCount,
-                wpm = s.wpm,
+                wpm = s.copyWpm,
                 farnsworth = s.farnsworth,
                 onCharset = { charset = it; regenerate() },
                 onGroupCount = { groupCount = it; regenerate() },
-                onWpm = { app.prefs.update { prefs -> prefs.copy(wpm = it, farnsworth = if (prefs.farnsworth > it) 0 else prefs.farnsworth) } },
+                onWpm = { app.prefs.update { prefs -> prefs.copy(copyWpm = it, farnsworth = if (prefs.farnsworth > it) 0 else prefs.farnsworth) } },
                 onFarnsworth = { app.prefs.update { prefs -> prefs.copy(farnsworth = it) } },
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
             )

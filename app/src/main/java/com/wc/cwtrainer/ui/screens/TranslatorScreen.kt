@@ -72,6 +72,7 @@ import com.wc.cwtrainer.ui.Surface1
 import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
+import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicReference
 
@@ -319,7 +320,7 @@ private fun KeyBlock(app: AppState) {
     val tapMemory = remember { AtomicReference<Char?>(null) }
 
     // 发码速度由 App 自己决定，初始码速可信
-    val decoder = remember { MorseDecoder(s.wpm.toDouble(), trustInitialWpm = true) }
+    val decoder = remember { MorseDecoder(s.translatorWpm.toDouble(), trustInitialWpm = true) }
     val scrollState = rememberScrollState()
 
     // —— 页面进入自动启动 SIDETONE ——
@@ -335,7 +336,7 @@ private fun KeyBlock(app: AppState) {
     LaunchedEffect(Unit) {
         var lastSentElem: Char? = null
         while (true) {
-            val wpm = app.prefs.data.wpm
+            val wpm = app.prefs.data.translatorWpm
             val unitMs = 1200.0 / wpm.coerceAtLeast(5)
 
             // 当前应发的元素：优先按住的两个拨片，其次消费一次"轻点记忆"
@@ -490,6 +491,11 @@ private fun KeyBlock(app: AppState) {
                         .border(1.dp, if (s.iambicB) Green.copy(alpha = 0.5f) else Line, RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 )
+                Spacer(Modifier.width(8.dp))
+                WpmAdjuster(
+                    wpm = s.translatorWpm,
+                    onWpm = { app.prefs.update { p -> p.copy(translatorWpm = it) } }
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -539,14 +545,14 @@ private fun EncodeBlock(app: AppState) {
         input.text.uppercase().filter { Morse.code(it) != null }
     }
     val durationMs = remember(textOnly) {
-        buildSegments(textOnly, Fist(wpm = s.wpm.toDouble(), farnsworth = s.farnsworth.toDouble()))
+        buildSegments(textOnly, Fist(wpm = s.translatorWpm.toDouble(), farnsworth = s.farnsworth.toDouble()))
             .sumOf { it.ms }
     }
 
     fun play() {
         val txt = input.text.uppercase().trim().filter { Morse.code(it) != null }
         if (txt.isEmpty()) return
-        val fist = Fist(wpm = s.wpm.toDouble(), farnsworth = s.farnsworth.toDouble())
+        val fist = Fist(wpm = s.translatorWpm.toDouble(), farnsworth = s.farnsworth.toDouble())
         app.audio.play(
             voices = listOf(VoiceSpec(text = txt, fist = fist, toneHz = s.toneHz.toDouble())),
             volume = s.volume, noiseLevel = s.noiseLevel
@@ -600,7 +606,7 @@ private fun EncodeBlock(app: AppState) {
 
         Spacer(Modifier.height(10.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("速度 ${s.wpm} WPM", Amber)
+            StatChip("速度 ${s.translatorWpm} WPM", Amber)
             StatChip("音调 ${s.toneHz} Hz", Green)
             StatChip("时长 ${"%.1f".format(durationMs / 1000.0)} s", TextDim)
         }

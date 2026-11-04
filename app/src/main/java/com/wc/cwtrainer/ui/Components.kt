@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -151,6 +154,53 @@ fun LabeledSlider(
             steps = steps,
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+/** 紧凑码速调节条：- 按钮 + 数值 + + 按钮，5~40 WPM */
+@Composable
+fun WpmAdjuster(
+    wpm: Int,
+    onWpm: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "码速"
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Surface2)
+            .border(1.dp, Line, RoundedCornerShape(8.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = TextDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        Spacer(Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Surface1)
+                .border(1.dp, Line, RoundedCornerShape(6.dp))
+                .clickable { if (wpm > 5) onWpm(wpm - 1) },
+            contentAlignment = Alignment.Center
+        ) { Text("−", color = Amber, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+        Text(
+            text = "$wpm",
+            color = Amber, fontSize = 14.sp,
+            fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Surface1)
+                .border(1.dp, Line, RoundedCornerShape(6.dp))
+                .clickable { if (wpm < 40) onWpm(wpm + 1) },
+            contentAlignment = Alignment.Center
+        ) { Text("+", color = Amber, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+        Text("WPM", color = TextDim, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(start = 4.dp))
     }
 }
 

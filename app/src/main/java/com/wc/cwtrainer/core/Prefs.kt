@@ -19,7 +19,12 @@ data class SettingsData(
     val micSensitivity: Float = 0.6f,
     val extToneHz: Int = 700,
     val noiseLevel: Float = 0.08f,
-    val ttsRate: Float = 1.0f
+    val ttsRate: Float = 1.0f,
+    // 各板块独立码速
+    val copyWpm: Int = 20,
+    val learnWpm: Int = 20,
+    val contestWpm: Int = 25,
+    val translatorWpm: Int = 20
 )
 
 /** 轻量设置存储，Compose 状态可直接读取 */
@@ -43,7 +48,11 @@ class AppPrefs(context: Context) {
         micSensitivity = sp.getFloat("micSensitivity", 0.6f),
         extToneHz = sp.getInt("extToneHz", 700),
         noiseLevel = sp.getFloat("noiseLevel", 0.08f),
-        ttsRate = sp.getFloat("ttsRate", 1.0f)
+        ttsRate = sp.getFloat("ttsRate", 1.0f),
+        copyWpm = sp.getInt("copyWpm", 20),
+        learnWpm = sp.getInt("learnWpm", 20),
+        contestWpm = sp.getInt("contestWpm", 25),
+        translatorWpm = sp.getInt("translatorWpm", 20)
     )
 
     fun update(block: (SettingsData) -> SettingsData) {
@@ -61,6 +70,10 @@ class AppPrefs(context: Context) {
             .putInt("extToneHz", next.extToneHz)
             .putFloat("noiseLevel", next.noiseLevel)
             .putFloat("ttsRate", next.ttsRate)
+            .putInt("copyWpm", next.copyWpm)
+            .putInt("learnWpm", next.learnWpm)
+            .putInt("contestWpm", next.contestWpm)
+            .putInt("translatorWpm", next.translatorWpm)
             .apply()
     }
 }

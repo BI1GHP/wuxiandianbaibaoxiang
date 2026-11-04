@@ -55,6 +55,7 @@ import com.wc.cwtrainer.core.ContestCheck
 import com.wc.cwtrainer.core.ContestGen
 import com.wc.cwtrainer.core.ContestMode
 import com.wc.cwtrainer.core.VoiceSpec
+import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlin.math.cos
 import kotlin.random.Random
 
@@ -130,8 +131,13 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         if (loopSession == 0) return@LaunchedEffect
         while (playing) {
             // script/station 是 state 委托，循环内读取始终拿到当前台站的报文
+            // 码速用赛事板块独立设置覆盖台站随机手法，其余手法参数（划长/抖动等）保留真实感
             app.audio.play(
-                voices = listOf(VoiceSpec(text = script, fist = station.cwFist, toneHz = s.toneHz.toDouble())),
+                voices = listOf(VoiceSpec(
+                    text = script,
+                    fist = station.cwFist.copy(wpm = s.contestWpm.toDouble()),
+                    toneHz = s.toneHz.toDouble()
+                )),
                 volume = s.volume, noiseLevel = s.noiseLevel
             )
             while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
@@ -176,6 +182,19 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             ) {
                 Box(Modifier.weight(1f)) { FixedModeLight(pulse = pulse) }
                 Box(Modifier.weight(1f)) { StatusLeds(playing = playing, pulse = pulse) }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            // 赛事码速调节（独立于全局设置）
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                WpmAdjuster(
+                    wpm = s.contestWpm,
+                    onWpm = { app.prefs.update { p -> p.copy(contestWpm = it) } },
+                    label = "对方码速"
+                )
             }
             Spacer(Modifier.height(10.dp))
 
