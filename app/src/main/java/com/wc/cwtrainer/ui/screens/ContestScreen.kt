@@ -465,7 +465,10 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             }
 
             // —— 瀑布滚动：新帧在顶部，旧帧下移 ——
-            waterfall = (waterfall.dropLast(1) + listOf(newBins.toList())).toList()
+            // 注意：新帧追加到末尾（末尾=最新=画在顶部），必须丢头部最旧的一行。
+            // 之前误写成 dropLast(1)，把刚追加的新帧又丢掉，历史全是初始的 0（纯黑），
+            // 所以除顶部一行外整块画布是黑的。
+            waterfall = waterfall.drop(1) + listOf(newBins.toList())
         }
     }
 
