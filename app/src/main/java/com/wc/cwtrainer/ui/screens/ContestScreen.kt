@@ -370,10 +370,10 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
         var simulateOn = false
         var nextSwitchAt = SystemClock.elapsedRealtime() + Random.nextLong(40, 120)
         var frameCount = 0L
-        var driftOffset = 0.0   // 频率漂移：±3 bin 慢慢晃
+        var driftOffset = 0.0   // 频率漂移：±2 bin 慢慢晃
 
         while (true) {
-            kotlinx.coroutines.delay(40)
+            kotlinx.coroutines.delay(50)   // 20 行/秒，40 行历史 = 2 秒滚动全程
             frameCount++
             val now = SystemClock.elapsedRealtime()
 
@@ -381,37 +381,42 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             if (now >= nextSwitchAt) {
                 simulateOn = !simulateOn
                 nextSwitchAt = now + if (simulateOn) {
-                    if (Random.nextBoolean()) Random.nextLong(60, 130) else Random.nextLong(160, 320)
+                    if (Random.nextBoolean()) Random.nextLong(100, 250) else Random.nextLong(300, 600)
                 } else {
-                    Random.nextLong(50, 260)
+                    Random.nextLong(100, 400)
                 }
             }
 
             // —— 频率漂移：正弦缓慢左右晃 ±2 bin ——
-            driftOffset = kotlin.math.sin(frameCount / 25.0) * 2.0
+            driftOffset = kotlin.math.sin(frameCount / 30.0) * 2.0
 
             // —— 生成频谱 ——
+            // 关键：噪声用平滑演化场（正弦叠加），行间有空间连续性，
+            // 滚动时纹理跟着移动 → 肉眼能看到"瀑布在流"
+            // （纯随机噪声每行独立，滚动前后统计特征一样，看起来就是静止的）
+            val t = frameCount * 0.08
             val baseBin = 32 + driftOffset
-            val intensityMul = if (playing) 1.2f else 0.45f   // 播放时更亮
+            val intensityMul = if (playing) 1.0f else 0.4f
             val newBins = FloatArray(64)
 
             for (i in 0 until 64) {
-                val dist = kotlin.math.abs(i - baseBin)
-                val noise = (Random.nextFloat() * 0.09f + 0.04f).toDouble()
+                val x = i.toDouble()
+                // 平滑噪声底：三个空间频率的正弦叠加，随时间缓慢演化
+                val smooth = (kotlin.math.sin(x * 0.35 + t) * 0.5 +
+                              kotlin.math.sin(x * 0.17 - t * 0.7) * 0.3 +
+                              kotlin.math.sin(x * 0.55 + t * 0.35) * 0.2 + 1.0) / 2.0
+                var energy = 0.10 + smooth * 0.14 + Random.nextFloat() * 0.04
 
-                val signal: Double = if (simulateOn) {
-                    val g = kotlin.math.exp(-dist * dist / 8.0)
-                    (0.65 + Random.nextFloat() * 0.35f) * g * intensityMul
-                } else if (playing && dist <= 2) {
-                    (Random.nextFloat() * 0.06f).toDouble()
-                } else {
-                    0.0
+                // 信号亮带：高斯包络，发码时亮起
+                if (simulateOn) {
+                    val dist = kotlin.math.abs(i - baseBin)
+                    val g = kotlin.math.exp(-dist * dist / 10.0)
+                    energy += (0.55 + Random.nextFloat() * 0.45) * g * intensityMul
                 }
-
-                newBins[i] = (noise + signal).coerceIn(0.0, 1.0).toFloat()
+                newBins[i] = energy.coerceIn(0.0, 1.0).toFloat()
             }
 
-            // —— 瀑布滚动：新帧在底部，旧帧上移 ——
+            // —— 瀑布滚动：新帧在顶部，旧帧下移 ——
             waterfall = (waterfall.dropLast(1) + listOf(newBins.toList())).toList()
         }
     }
@@ -451,26 +456,25 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
                 val binW = w / 64f
                 val rowH = h / 40f
 
-                // 画瀑布：从底部（最新）到顶部（最旧）
+                // 真实 SDR 热力图配色：每个 bin 都绘制（背景也有色），确保填满整框
+                fun heatColor(e: Float): Color = when {
+                    e < 0.10f -> Color(0xFF0A1420)                       // 深底蓝黑（背景也填色）
+                    e < 0.22f -> Color(0xFF0D2B45)                       // 深蓝
+                    e < 0.38f -> Color(0xFF0E5A5A)                       // 青
+                    e < 0.58f -> Color(0xFF1FA36C)                       // 绿
+                    e < 0.78f -> Color(0xFF8FC94E)                       // 黄绿
+                    else -> LedAmber                                     // 琥珀亮信号
+                }
+
+                // 画瀑布：最新行在顶部（index 39），旧行向下滚动
                 for (rowIdx in 0 until 40) {
-                    val row = waterfall[39 - rowIdx]  // 旧的在上
-                    // 越旧越暗，但最旧仍保留 ~53% 亮度 —— 之前 0.025 衰减到 0.025 导致底部几乎全黑
-                    val rowAlpha = 1f - rowIdx * 0.012f
+                    val row = waterfall[39 - rowIdx]
                     for (binIdx in 0 until 64) {
-                        val energy = row[binIdx]
-                        if (energy > 0.005f) {
-                            val color = when {
-                                energy > 0.75f -> LedAmber.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
-                                energy > 0.45f -> LedGreen.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
-                                // 噪声底加一个最低 alpha，保证每个 bin 都可见，瀑布填满整框
-                                else -> LedGreen.copy(alpha = ((energy * 1.5f).coerceAtMost(0.6f) * rowAlpha).coerceAtLeast(0.05f))
-                            }
-                            drawRect(
-                                color = color,
-                                topLeft = Offset(binIdx * binW, rowIdx * rowH),
-                                size = androidx.compose.ui.geometry.Size(binW + 0.5f, rowH + 0.5f)
-                            )
-                        }
+                        drawRect(
+                            color = heatColor(row[binIdx]),
+                            topLeft = Offset(binIdx * binW, rowIdx * rowH),
+                            size = androidx.compose.ui.geometry.Size(binW + 1f, rowH + 1f)  // +1 消除亚像素缝隙
+                        )
                     }
                 }
 
