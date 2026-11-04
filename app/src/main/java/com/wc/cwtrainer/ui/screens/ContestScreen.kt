@@ -131,14 +131,15 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         if (loopSession == 0) return@LaunchedEffect
         while (playing) {
             // script/station 是 state 委托，循环内读取始终拿到当前台站的报文
-            // 码速用赛事板块独立设置覆盖台站随机手法，其余手法参数（划长/抖动等）保留真实感
+            // 码速/音调/音量每轮重播实时读取，用户调节后下一轮自动生效，无需停止重开
+            val now = app.prefs.data
             app.audio.play(
                 voices = listOf(VoiceSpec(
                     text = script,
-                    fist = station.cwFist.copy(wpm = s.contestWpm.toDouble()),
-                    toneHz = s.toneHz.toDouble()
+                    fist = station.cwFist.copy(wpm = now.contestWpm.toDouble()),
+                    toneHz = now.toneHz.toDouble()
                 )),
-                volume = s.volume, noiseLevel = s.noiseLevel
+                volume = now.volume, noiseLevel = now.noiseLevel
             )
             while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
             if (!playing) break
