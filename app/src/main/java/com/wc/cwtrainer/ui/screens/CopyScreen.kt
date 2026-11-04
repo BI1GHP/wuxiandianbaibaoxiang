@@ -15,7 +15,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -665,17 +666,19 @@ private fun ContentPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ComparisonStrip(target: String, answer: String) {
     val maxLen = maxOf(target.length, answer.length)
 
-    Row(
+    FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(Bg)
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         for (i in 0 until maxLen) {
             val t = target.getOrNull(i)
@@ -691,10 +694,9 @@ private fun ComparisonStrip(target: String, answer: String) {
 }
 
 @Composable
-private fun RowScope.CharCell(char: Char, color: Color, label: String?) {
+private fun CharCell(char: Char, color: Color, label: String?) {
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.weight(1f)
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
@@ -724,33 +726,40 @@ private fun RowScope.CharCell(char: Char, color: Color, label: String?) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MorseStrip(target: String) {
-    val clean = target.filter { it != ' ' }
-    Row(
+    // FlowRow 自动换行：每个字符一个"字母+电码"小列，永远不会越出边框；
+    // 空格变成固定宽度的间隔，保持字母与电码一一对应
+    FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(Surface2)
             .padding(horizontal = 10.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        clean.forEach { c ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = c.toString(),
-                    color = TextMain,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    text = Morse.visualFor(c),
-                    color = Amber,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(top = 1.dp)
-                )
+        target.forEach { c ->
+            if (c == ' ') {
+                Spacer(Modifier.width(10.dp))
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = c.toString(),
+                        color = TextMain,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = Morse.visualFor(c),
+                        color = Amber,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                }
             }
         }
     }

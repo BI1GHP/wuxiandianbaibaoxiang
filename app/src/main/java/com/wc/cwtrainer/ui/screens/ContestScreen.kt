@@ -75,6 +75,8 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
     var station by remember { mutableStateOf(ContestGen.station()) }
     var playing by remember { mutableStateOf(false) }
+    var loopSession by remember { mutableStateOf(0) }
+    var nextReplayIn by remember { mutableStateOf(0) }
     var showScript by remember { mutableStateOf(false) }   // 默认关闭！真实比赛盲听
 
     var callIn by remember { mutableStateOf(TextFieldValue("")) }
@@ -106,26 +108,44 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         label = "sm"
     )
 
+    fun stop() {
+        playing = false; nextReplayIn = 0
+        app.audio.stop()
+    }
     fun newStation() {
+        stop()
         station = ContestGen.station()
         callIn = TextFieldValue(""); rstIn = TextFieldValue(""); serialIn = TextFieldValue("")
-        check = null; playing = false
+        check = null
     }
-    fun stop() { app.audio.stop(); playing = false }
     fun play() {
-        check = null; stop(); playing = true
-        app.audio.play(
-            voices = listOf(VoiceSpec(text = script, fist = station.cwFist, toneHz = s.toneHz.toDouble())),
-            volume = s.volume, noiseLevel = s.noiseLevel
-        ) { playing = false }
+        check = null
+        app.audio.stop()
+        playing = true
+        loopSession++
     }
-    fun replay() {
-        stop(); playing = true
-        app.audio.play(
-            voices = listOf(VoiceSpec(text = script, fist = station.cwFist, toneHz = s.toneHz.toDouble())),
-            volume = s.volume, noiseLevel = s.noiseLevel
-        ) { playing = false }
+
+    // —— 自动循环播放：一遍播完静默 5 秒后自动重播，直至点"停止"或换台/离开 ——
+    LaunchedEffect(loopSession) {
+        if (loopSession == 0) return@LaunchedEffect
+        while (playing) {
+            // script/station 是 state 委托，循环内读取始终拿到当前台站的报文
+            app.audio.play(
+                voices = listOf(VoiceSpec(text = script, fist = station.cwFist, toneHz = s.toneHz.toDouble())),
+                volume = s.volume, noiseLevel = s.noiseLevel
+            )
+            while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
+            if (!playing) break
+            for (sec in 5 downTo 1) {
+                nextReplayIn = sec
+                kotlinx.coroutines.delay(1000)
+                if (!playing) break
+            }
+            nextReplayIn = 0
+        }
+        nextReplayIn = 0
     }
+
     fun checkIt() {
         check = ContestGen.check(station, callIn.text, rstIn.text, serialIn.text)
         check?.let { app.stats.reportContest(it.score) }
@@ -185,9 +205,9 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         }
 
         BottomPanelBar(
-            playing = playing, hasResult = check != null,
+            playing = playing, hasResult = check != null, nextReplayIn = nextReplayIn,
             onNewStation = { newStation() }, onPlay = { play() },
-            onReplay = { replay() }, onStop = { stop() }, onCheck = { checkIt() },
+            onStop = { stop() }, onCheck = { checkIt() },
             modifier = Modifier.padding(12.dp)
         )
     }
@@ -414,14 +434,16 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
                 // 画瀑布：从底部（最新）到顶部（最旧）
                 for (rowIdx in 0 until 40) {
                     val row = waterfall[39 - rowIdx]  // 旧的在上
-                    val rowAlpha = 1f - rowIdx * 0.025f  // 越旧越暗
+                    // 越旧越暗，但最旧仍保留 ~53% 亮度 —— 之前 0.025 衰减到 0.025 导致底部几乎全黑
+                    val rowAlpha = 1f - rowIdx * 0.012f
                     for (binIdx in 0 until 64) {
                         val energy = row[binIdx]
                         if (energy > 0.005f) {
                             val color = when {
                                 energy > 0.75f -> LedAmber.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
                                 energy > 0.45f -> LedGreen.copy(alpha = (energy * rowAlpha).coerceAtMost(1f))
-                                else -> LedGreen.copy(alpha = ((energy * 1.5f).coerceAtMost(0.6f) * rowAlpha))
+                                // 噪声底加一个最低 alpha，保证每个 bin 都可见，瀑布填满整框
+                                else -> LedGreen.copy(alpha = ((energy * 1.5f).coerceAtMost(0.6f) * rowAlpha).coerceAtLeast(0.05f))
                             }
                             drawRect(
                                 color = color,
@@ -686,8 +708,8 @@ private fun CheckLine(label: String, ok: Boolean, correct: String) {
 
 @Composable
 private fun BottomPanelBar(
-    playing: Boolean, hasResult: Boolean,
-    onNewStation: () -> Unit, onPlay: () -> Unit, onReplay: () -> Unit,
+    playing: Boolean, hasResult: Boolean, nextReplayIn: Int,
+    onNewStation: () -> Unit, onPlay: () -> Unit,
     onStop: () -> Unit, onCheck: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -696,73 +718,65 @@ private fun BottomPanelBar(
             .clip(RoundedCornerShape(12.dp))
             .background(Brush.horizontalGradient(listOf(PanelRaised, PanelBg, PanelRaised)))
             .border(1.dp, PanelLine, RoundedCornerShape(12.dp))
-            .padding(horizontal = 6.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        SmallAction("↻", "换台", LedAmber) { onNewStation() }
-        Spacer(Modifier.width(2.dp))
+        PanelButton(
+            text = "下一组", color = LedAmber, filled = false,
+            modifier = Modifier.weight(1f)
+        ) { onNewStation() }
 
         if (playing) {
-            Box(
-                modifier = Modifier.weight(1f).height(48.dp)
-                    .clip(RoundedCornerShape(8.dp)).background(LedRed)
-                    .clickable { onStop() },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(Color.White))
-                    Spacer(Modifier.width(8.dp))
-                    Text("STOP 停止接收", color = Color.White,
-                        fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace)
-                }
-            }
+            PanelButton(
+                text = if (nextReplayIn > 0) "停止 ${nextReplayIn}s" else "停止",
+                color = LedRed, filled = true,
+                modifier = Modifier.weight(1f)
+            ) { onStop() }
         } else {
-            Box(
-                modifier = Modifier.weight(1f).height(48.dp)
-                    .clip(RoundedCornerShape(8.dp)).background(LedAmber)
-                    .clickable { onPlay() },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("●", color = Color(0xFF1A1200), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.width(8.dp))
-                    Text("CALL 接收呼叫", color = Color(0xFF1A1200),
-                        fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace)
-                }
-            }
+            PanelButton(
+                text = "接收呼叫", color = LedAmber, filled = true,
+                modifier = Modifier.weight(1f)
+            ) { onPlay() }
         }
 
-        Spacer(Modifier.width(2.dp))
-        SmallAction("🔁", "重听", if (playing) LedDim else LedCyan, enabled = !playing) { onReplay() }
-        Spacer(Modifier.width(2.dp))
-        if (!hasResult) {
-            SmallAction("✓", "判分", if (playing) LedDim else LedGreen, enabled = !playing) { onCheck() }
-        } else {
-            SmallAction("✓", "已判", LedGreen.copy(alpha = 0.4f), enabled = false) {}
-        }
+        PanelButton(
+            text = if (hasResult) "已提交" else "提交",
+            color = if (hasResult) LedDim else LedGreen, filled = false,
+            enabled = !playing && !hasResult,
+            modifier = Modifier.weight(1f)
+        ) { onCheck() }
     }
 }
 
 @Composable
-private fun SmallAction(
-    icon: String, label: String, color: Color,
-    enabled: Boolean = true, onClick: () -> Unit
+private fun PanelButton(
+    text: String, color: Color, filled: Boolean,
+    modifier: Modifier = Modifier, enabled: Boolean = true,
+    onClick: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.height(48.dp).clip(RoundedCornerShape(8.dp))
-            .background(PanelRecessed)
-            .border(1.dp, PanelLine, RoundedCornerShape(8.dp))
+    val contentColor = when {
+        !enabled -> color.copy(alpha = 0.5f)
+        filled && color == LedRed -> Color.White
+        filled -> Color(0xFF1A1200)
+        else -> color
+    }
+    Box(
+        modifier = modifier.height(52.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (filled) color else color.copy(alpha = 0.12f))
+            .border(1.dp, if (filled) color else color.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Text(icon, color = if (enabled) color else color.copy(alpha = 0.5f),
-            fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-        Text(label, color = if (enabled) color else color.copy(alpha = 0.5f),
-            fontSize = 9.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 1.dp))
+        Text(
+            text = text,
+            color = contentColor,
+            fontSize = 14.sp, fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1, softWrap = false,
+            textAlign = TextAlign.Center
+        )
     }
 }

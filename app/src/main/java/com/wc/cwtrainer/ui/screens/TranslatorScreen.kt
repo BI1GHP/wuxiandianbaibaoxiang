@@ -51,6 +51,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -72,6 +73,7 @@ import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicReference
 
 enum class TranslatorTab { DECODE, KEY, ENCODE }
 
@@ -311,8 +313,10 @@ private fun KeyBlock(app: AppState) {
     var dashHeld by remember { mutableStateOf(false) }
     var keying by remember { mutableStateOf(false) }
     var currentElem by remember { mutableStateOf<Char?>(null) }
-    // 点/划“记忆”：轻点后即使已经抬起，也会完整发出一个元素，避免快速连点时丢失
-    var tapMemory by remember { mutableStateOf<Char?>(null) }
+    // 点/划"记忆"：轻点后即使已经抬起，也会完整发出一个元素。
+    // 注意：必须用 AtomicReference 而不是 Compose state ——
+    // paddling 循环 2ms tick 里写 Compose state 会触发 500Hz 重组，导致界面跳动
+    val tapMemory = remember { AtomicReference<Char?>(null) }
 
     // 发码速度由 App 自己决定，初始码速可信
     val decoder = remember { MorseDecoder(s.wpm.toDouble(), trustInitialWpm = true) }
@@ -327,25 +331,25 @@ private fun KeyBlock(app: AppState) {
     }
     DisposableEffect(Unit) { onDispose { app.sidetone.stop() } }
 
-    // —— paddling 核心：2ms tick ——
+    // —— paddling 核心：2ms tick，绝不写任何 Compose state ——
     LaunchedEffect(Unit) {
         var lastSentElem: Char? = null
         while (true) {
             val wpm = app.prefs.data.wpm
             val unitMs = 1200.0 / wpm.coerceAtLeast(5)
 
-            // 当前应发的元素：优先按住的两个拨片，其次消费一次“轻点记忆”
+            // 当前应发的元素：优先按住的两个拨片，其次消费一次"轻点记忆"
             val heldTarget = when {
                 dotHeld && dashHeld -> if (lastSentElem == '.') '-' else '.'
                 dotHeld -> '.'
                 dashHeld -> '-'
                 else -> null
             }
-            val target = heldTarget ?: tapMemory
+            val target = heldTarget ?: tapMemory.get()
 
             if (target != null) {
-                if (heldTarget == null || tapMemory == target) tapMemory = null
-                if (dotHeld && dashHeld) tapMemory = null
+                if (heldTarget == null || tapMemory.get() == target) tapMemory.set(null)
+                if (dotHeld && dashHeld) tapMemory.set(null)
                 lastSentElem = target
                 val durMs = if (target == '.') unitMs.toLong() else (unitMs * 3.0).toLong()
 
@@ -358,7 +362,7 @@ private fun KeyBlock(app: AppState) {
                 app.sidetone.gated = false
                 decoder.keyUp(SystemClock.elapsedRealtime())
 
-                // 元素间隔 1 单位，保证“点 + 划”能组成完整电码
+                // 元素间隔 1 单位，保证"点 + 划"能组成完整电码
                 delay(unitMs.toLong())
             } else {
                 lastSentElem = null
@@ -367,13 +371,14 @@ private fun KeyBlock(app: AppState) {
         }
     }
 
-    // —— 解码 tick：40ms —— sent 只从这里写入 ——
+    // —— 解码 tick：40ms —— sent 只从这里写入，且仅在变化时写 ——
     var sent by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
         while (true) {
             delay(40)
             decoder.tick(SystemClock.elapsedRealtime())
-            sent = decoder.text
+            val t = decoder.text
+            if (t != sent) sent = t
         }
     }
 
@@ -385,17 +390,19 @@ private fun KeyBlock(app: AppState) {
         }
     }
 
-    // —— UI 节流 tick：60ms ——
+    // —— UI 节流 tick：60ms，仅在值变化时写 state，避免无效重组 ——
     LaunchedEffect(Unit) {
         while (true) {
             delay(60)
-            keying = app.sidetone.gated || dotHeld || dashHeld
-            currentElem = when { dotHeld -> '.'; dashHeld -> '-'; else -> null }
+            val k = app.sidetone.gated || dotHeld || dashHeld
+            if (k != keying) keying = k
+            val e = when { dotHeld -> '.'; dashHeld -> '-'; else -> null }
+            if (e != currentElem) currentElem = e
         }
     }
 
     fun leverDown(c: Char) {
-        tapMemory = c
+        tapMemory.set(c)
         if (c == '.') dotHeld = true else dashHeld = true
     }
     fun leverUp(c: Char) { if (c == '.') dotHeld = false else dashHeld = false }
@@ -408,46 +415,16 @@ private fun KeyBlock(app: AppState) {
     )
 
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
+        // —— 发码显示：置顶、独占一块、内部独立滚动，高度随剩余空间自适应 ——
+        // 布局完全固定（无外层 verticalScroll），按键时任何重组都不会引起位置跳动
+        Column(
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp)
+        ) {
             Spacer(Modifier.height(6.dp))
 
-            // 状态栏
-            Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    .background(Surface1).border(1.dp, Line, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (keying) Green.copy(alpha = dotPulse) else Line))
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = when {
-                            keying -> "正在发码 ${if (currentElem != null) "→ ${if (currentElem == '.') "·" else "—"}" else ""}"
-                            else -> "左点右划 · 点划可连续组合"
-                        },
-                        color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "估测 ${"%.0f".format(decoder.estimatedWpm)} WPM · 平均点长 ${"%.0f".format(decoder.avgDotMs)} ms",
-                        color = TextDim, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
-                Text(
-                    text = if (s.iambicB) "IAMBIC B" else "单点单划",
-                    color = if (s.iambicB) Green else TextDim, fontSize = 10.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp))
-                        .background(if (s.iambicB) Green.copy(alpha = 0.15f) else Surface2)
-                        .border(1.dp, if (s.iambicB) Green.copy(alpha = 0.5f) else Line, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
-
-            Spacer(Modifier.height(10.dp))
-
-            // 收报显示 + 清屏
+            // 收报显示 + 清屏（置顶，吃掉所有剩余空间）
             Column(
-                modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(14.dp))
+                modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(14.dp))
                     .background(Color(0xFF0A0D11)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -478,10 +455,47 @@ private fun KeyBlock(app: AppState) {
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Text("提示：可连续轻点“·”“—”组合成完整电码；双指同时按 = IAMBIC B 交替发码。",
-                color = TextDim, fontSize = 11.sp, lineHeight = 16.sp)
             Spacer(Modifier.height(10.dp))
+
+            // 状态栏（单行文字，超长省略，绝不出框）
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(Surface1).border(1.dp, Line, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (keying) Green.copy(alpha = dotPulse) else Line))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = when {
+                            keying -> "正在发码 ${if (currentElem != null) "→ ${if (currentElem == '.') "·" else "—"}" else ""}"
+                            else -> "左点右划 · 点划可连续组合"
+                        },
+                        color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "估测 ${"%.0f".format(decoder.estimatedWpm)} WPM · 平均点长 ${"%.0f".format(decoder.avgDotMs)} ms",
+                        color = TextDim, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = if (s.iambicB) "IAMBIC B" else "单点单划",
+                    color = if (s.iambicB) Green else TextDim, fontSize = 10.sp,
+                    maxLines = 1, softWrap = false,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                        .background(if (s.iambicB) Green.copy(alpha = 0.15f) else Surface2)
+                        .border(1.dp, if (s.iambicB) Green.copy(alpha = 0.5f) else Line, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text("提示：可连续轻点 \u201C·\u201D \u201C—\u201D 组合成完整电码；双指同时按 = IAMBIC B 交替发码。",
+                color = TextDim, fontSize = 11.sp, lineHeight = 16.sp)
+            Spacer(Modifier.height(6.dp))
         }
 
         // —— 固定按键区 ——
