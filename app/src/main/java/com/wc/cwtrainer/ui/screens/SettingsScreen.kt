@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -269,26 +270,16 @@ private fun CheckForUpdateButton() {
                 }
             } catch (e: Exception) {
                 status = "error"
-                message = "❌ 下载失败：${e.message}"
+                // 带异常类型便于定位：ConnectException / SocketTimeoutException / SSLException 等
+                message = "❌ 下载失败：${e.javaClass.simpleName}: ${e.message}"
             }
         }
-    }
-
-    val onClickLabel = if (status == "new" && apkUrl != null) {
-        "⬇ 下载并安装 $newVersion"
-    } else when (status) {
-        "checking" -> "⏳ 检查中…"
-        "up_to_date" -> "✅ 当前已是最新版本"
-        "error" -> "❌ 失败，点击重试"
-        "need_perm" -> "⚠ 点击重新检查"
-        "installing", "download" -> message
-        else -> "🔄 点击检查更新"
     }
 
     val isClickable = status != "checking" && status != "download" && status != "installing"
 
     Box(
-        modifier = Modifier.fillMaxWidth().height(44.dp)
+        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(
                 when (status) {
@@ -339,7 +330,9 @@ private fun CheckForUpdateButton() {
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = if (status == "download" || status == "installing" || status == "need_perm") message else onClickLabel,
+            // 始终显示 message —— 各分支已把对应文案（含错误详情）写进 message
+            // 之前 error 状态显示笼统的 onClickLabel，把详细错误吃掉了
+            text = message,
             color = when (status) {
                 "new", "download", "installing" -> Amber
                 "error" -> Red
