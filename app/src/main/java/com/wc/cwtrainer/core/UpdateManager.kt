@@ -255,12 +255,31 @@ object UpdateManager {
     // ================== 下载 + 安装 ==================
 
     suspend fun downloadApk(context: Context, apkUrl: String): File = withContext(Dispatchers.IO) {
-        // 用更短的 timeout + 支持 302 重定向（Gitee/GitHub 下载都需要）
-        val conn = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8000
-            readTimeout = 8000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "wc-trainer")
+        // 手动跟随重定向（Gitee 会 302 两次到 foruda CDN，部分机型自动跟随不可靠）
+        var url = apkUrl
+        var conn: HttpURLConnection
+        var redirects = 0
+        while (true) {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15000
+                readTimeout = 30000
+                instanceFollowRedirects = false   // 手动处理，避免跨域自动跟随的坑
+                setRequestProperty("User-Agent", "wc-trainer")
+            }
+            when (conn.responseCode) {
+                in 200..299 -> break
+                HttpURLConnection.HTTP_MOVED_PERM,
+                HttpURLConnection.HTTP_MOVED_TEMP,
+                HttpURLConnection.HTTP_SEE_OTHER,
+                307, 308 -> {
+                    val loc = conn.getHeaderField("Location")
+                        ?: throw Exception("HTTP ${conn.responseCode} 无跳转地址")
+                    conn.disconnect()
+                    url = URL(URL(url), loc).toString()   // 支持相对路径跳转
+                    if (++redirects > 5) throw Exception("重定向次数过多")
+                }
+                else -> throw Exception("HTTP ${conn.responseCode}")
+            }
         }
 
         val downloadsDir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -282,6 +301,14 @@ object UpdateManager {
                 }
                 output.flush()
             }
+        }
+        conn.disconnect()
+
+        // 校验文件完整性：APK 是 ZIP，必须以 PK 头开头
+        val magic = apkFile.inputStream().use { it.read().toByte() to it.read().toByte() }
+        if (apkFile.length() < 1024 * 1024 || magic != (0x50.toByte() to 0x4B.toByte())) {
+            apkFile.delete()
+            throw Exception("下载文件无效（${apkFile.length()} 字节）")
         }
         apkFile
     }
