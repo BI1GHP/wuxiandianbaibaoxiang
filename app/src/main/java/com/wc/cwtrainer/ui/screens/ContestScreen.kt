@@ -169,20 +169,18 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             FrequencyPanel(pulse)
             Spacer(Modifier.height(10.dp))
 
+            // 模式灯 + 状态灯：独立一行，左右平铺
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(Modifier.weight(0.35f)) {
-                    FixedModeLight(pulse = pulse)
-                    Spacer(Modifier.height(8.dp))
-                    StatusLeds(playing = playing, pulse = pulse)
-                }
-                // 频谱瀑布（取代原来的 StationInfoBlock）
-                Column(Modifier.weight(1f)) {
-                    SpectrumWaterfall(playing = playing, keying = keying, pulse = pulse)
-                }
+                Box(Modifier.weight(1f)) { FixedModeLight(pulse = pulse) }
+                Box(Modifier.weight(1f)) { StatusLeds(playing = playing, pulse = pulse) }
             }
+            Spacer(Modifier.height(10.dp))
+
+            // 频谱瀑布：独占一行，全宽平铺填满
+            SpectrumWaterfall(playing = playing, keying = keying, pulse = pulse)
 
             Spacer(Modifier.height(10.dp))
             SMeterPanel(level = if (playing) smeter else 0f)
@@ -277,7 +275,7 @@ private fun FrequencyPanel(pulse: Float) {
 @Composable
 private fun FixedModeLight(pulse: Float) {
     Column(
-        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
             .border(1.dp, PanelLine, RoundedCornerShape(10.dp)).padding(10.dp)
     ) {
         Text("模式 MODE", color = LedDim, fontSize = 9.sp,
@@ -310,7 +308,7 @@ private fun FixedModeLight(pulse: Float) {
 @Composable
 private fun StatusLeds(playing: Boolean, pulse: Float) {
     Column(
-        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
             .border(1.dp, PanelLine, RoundedCornerShape(10.dp)).padding(10.dp)
     ) {
         Text("状态 STATUS", color = LedDim, fontSize = 9.sp,
@@ -399,7 +397,8 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
     }
 
     Column(
-        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
+            .clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
             .border(1.dp, PanelLine, RoundedCornerShape(10.dp))
     ) {
         Row(
@@ -419,7 +418,8 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(150.dp)
+                .padding(horizontal = 8.dp)
+                .height(190.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color(0xFF05080C))
         ) {
