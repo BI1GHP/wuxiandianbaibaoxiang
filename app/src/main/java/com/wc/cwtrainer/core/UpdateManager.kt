@@ -8,7 +8,12 @@ import android.os.Environment
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -250,6 +255,68 @@ object UpdateManager {
         val digits = tag.filter { it.isDigit() }
         val padded = digits.padEnd(3, '0')
         return padded.toIntOrNull() ?: 0
+    }
+
+    // ================== 应用级更新流程状态 ==================
+    // 检查/下载跑在应用级作用域：离开设置页、重组或返回都不会被取消。
+    // 之前下载写在 LaunchedEffect 里，Composable 退出时协程被取消，界面上报
+    // TimeoutCancellationException: The coroutine scope left the composition。
+
+    data class Flow(
+        val status: String = "idle",   // idle/checking/new/downloading/installing/need_perm/up_to_date/error
+        val message: String = "🔄 点击检查更新",
+        val newVersion: String? = null,
+        val apkUrl: String? = null,
+        val source: String? = null
+    )
+
+    private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _flow = MutableStateFlow(Flow())
+    val flow: StateFlow<Flow> = _flow
+
+    fun checkUpdateAsync(currentCode: Int) {
+        if (_flow.value.status == "checking") return
+        _flow.value = _flow.value.copy(status = "checking", message = "⏳ 检查中…")
+        workScope.launch {
+            val result = checkUpdate(currentCode)
+            val info = result.info
+            _flow.value = when {
+                result.hasUpdate && info != null -> Flow(
+                    status = "new",
+                    message = "⬇ 发现 ${info.versionName}（%.1f MB · ${info.source}），点击下载"
+                        .format(info.apkSizeBytes / 1024.0 / 1024.0),
+                    newVersion = info.versionName,
+                    apkUrl = info.apkUrl,
+                    source = info.source
+                )
+                result.error != null -> _flow.value.copy(status = "error", message = "❌ ${result.error}")
+                else -> _flow.value.copy(status = "up_to_date", message = "✅ 已是最新版本（源: ${info?.source ?: "-"}）")
+            }
+        }
+    }
+
+    fun downloadAndInstallAsync(context: Context) {
+        val url = _flow.value.apkUrl ?: return
+        val status = _flow.value.status
+        if (status == "downloading" || status == "installing") return
+        _flow.value = _flow.value.copy(status = "downloading", message = "⏳ 下载中…")
+        workScope.launch {
+            try {
+                val file = downloadApk(context, url)
+                _flow.value = _flow.value.copy(status = "installing", message = "📦 正在安装…")
+                if (canInstallUnknownApp(context)) {
+                    installApk(context, file)
+                    // 回到可点击态，避免安装器返回后按钮一直停在 installing
+                    _flow.value = _flow.value.copy(status = "idle", message = "📦 已启动安装器")
+                } else {
+                    requestInstallPermission(context)
+                    _flow.value = _flow.value.copy(status = "need_perm", message = "⚠ 请允许安装未知应用，然后重新点击")
+                }
+            } catch (e: Exception) {
+                // 带异常类型便于定位：ConnectException / SocketTimeoutException / SSLException 等
+                _flow.value = _flow.value.copy(status = "error", message = "❌ 下载失败：${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
     }
 
     // ================== 下载 + 安装 ==================

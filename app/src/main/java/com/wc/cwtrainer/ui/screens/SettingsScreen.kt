@@ -19,9 +19,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,9 +46,6 @@ import com.wc.cwtrainer.ui.SectionTitle
 import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -244,39 +240,12 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
 @Composable
 private fun CheckForUpdateButton() {
     val ctx = LocalContext.current
-    var status by remember { mutableStateOf("idle") }
-    var message by remember { mutableStateOf("🔄 点击检查更新") }
-    var newVersion by remember { mutableStateOf<String?>(null) }
-    var apkUrl by remember { mutableStateOf<String?>(null) }
-    var updateSource by remember { mutableStateOf<String?>(null) }
+    // 状态放在 UpdateManager 里，离开设置页/重组都不会丢，也不会取消下载协程
+    val flow by UpdateManager.flow.collectAsState()
     val versionCode = remember { BuildConfig.VERSION_NAME.filter { it.isDigit() }.toIntOrNull() ?: 0 }
-
-    // 下载并安装
-    LaunchedEffect(status) {
-        if (status == "download" && apkUrl != null) {
-            status = "installing"
-            message = "⏳ 下载中…"
-            try {
-                val file = withContext(Dispatchers.IO) {
-                    UpdateManager.downloadApk(ctx, apkUrl!!)
-                }
-                if (UpdateManager.canInstallUnknownApp(ctx)) {
-                    UpdateManager.installApk(ctx, file)
-                    message = "📦 正在安装…"
-                } else {
-                    UpdateManager.requestInstallPermission(ctx)
-                    status = "need_perm"
-                    message = "⚠ 请允许安装未知应用，然后重新点击"
-                }
-            } catch (e: Exception) {
-                status = "error"
-                // 带异常类型便于定位：ConnectException / SocketTimeoutException / SSLException 等
-                message = "❌ 下载失败：${e.javaClass.simpleName}: ${e.message}"
-            }
-        }
-    }
-
-    val isClickable = status != "checking" && status != "download" && status != "installing"
+    val status = flow.status
+    val message = flow.message
+    val isClickable = status != "checking" && status != "downloading" && status != "installing"
 
     Box(
         modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
@@ -300,30 +269,9 @@ private fun CheckForUpdateButton() {
             )
             .clickable(enabled = isClickable) {
                 when (status) {
-                    "idle", "up_to_date", "error", "need_perm" -> {
-                        status = "checking"
-                        message = "⏳ 检查中…"
-                        kotlinx.coroutines.MainScope().launch {
-                            val result = UpdateManager.checkUpdate(versionCode)
-                            if (result.hasUpdate && result.info != null) {
-                                newVersion = result.info.versionName
-                                apkUrl = result.info.apkUrl
-                                updateSource = result.info.source
-                                status = "new"
-                                val sz = "%.1f".format(result.info.apkSizeBytes / 1024.0 / 1024.0)
-                                message = "⬇ 发现 ${result.info.versionName}（${sz} MB · ${result.info.source}），点击下载"
-                            } else if (result.error != null) {
-                                status = "error"
-                                message = "❌ ${result.error}"
-                            } else {
-                                status = "up_to_date"
-                                message = "✅ 已是最新版本（源: ${result.info?.source ?: "-"}）"
-                            }
-                        }
-                    }
-                    "new" -> {
-                        status = "download"
-                    }
+                    "new", "need_perm" -> UpdateManager.downloadAndInstallAsync(ctx)
+                    "checking", "downloading", "installing" -> Unit
+                    else -> UpdateManager.checkUpdateAsync(versionCode)
                 }
             }
             .padding(horizontal = 14.dp),
@@ -334,7 +282,7 @@ private fun CheckForUpdateButton() {
             // 之前 error 状态显示笼统的 onClickLabel，把详细错误吃掉了
             text = message,
             color = when (status) {
-                "new", "download", "installing" -> Amber
+                "new", "downloading", "installing" -> Amber
                 "error" -> Red
                 "up_to_date" -> TextDim
                 else -> TextMain
