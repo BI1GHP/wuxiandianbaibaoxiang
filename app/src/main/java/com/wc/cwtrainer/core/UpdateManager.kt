@@ -70,70 +70,73 @@ object UpdateManager {
 
     suspend fun checkUpdate(currentCode: Int): UpdateResult = withContext(Dispatchers.IO) {
         val errors = mutableListOf<String>()
+        val candidates = mutableListOf<ReleaseInfo>()
 
-        // —— 1. 先试 GitHub ——
-        try {
-            val parsed = fetchGitHub()
-            if (parsed != null) {
-                val code = parseVersionCode(parsed.tag)
-                if (code > 0) {
-                    val info = ReleaseInfo(
-                        versionName = parsed.tag, versionCode = code,
-                        htmlUrl = parsed.htmlUrl, apkUrl = parsed.apkUrl,
-                        apkSizeBytes = parsed.apkSize, body = parsed.body, source = "GitHub"
-                    )
-                    if (info.apkUrl != null) {
-                        Log.d(TAG, "GitHub hit: ${parsed.tag}, code=$code, cur=$currentCode")
-                        return@withContext UpdateResult(code > currentCode, info = info)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            errors.add("GitHub: ${e.message}")
-            Log.w(TAG, "GitHub failed, falling back to Gitee", e)
-        }
+        // 查询顺序：Gitee Releases → Gitee Tags → GitHub
+        // 国内 Gitee 稳定 (<0.3s)，GitHub 常超时 2.5s 白等；
+        // 但三个源结果统一收集后取 versionCode 最大者，不会因顺序丢新
 
-        // —— 2. 再试 Gitee Releases ——
+        // —— 1. Gitee Releases（首选）——
         try {
-            val parsed = fetchGiteeReleases()
-            if (parsed != null) {
+            fetchGiteeReleases()?.let { parsed ->
                 val code = parseVersionCode(parsed.tag)
-                if (code > 0) {
-                    val info = ReleaseInfo(
+                if (code > 0 && parsed.apkUrl != null) {
+                    candidates += ReleaseInfo(
                         versionName = parsed.tag, versionCode = code,
                         htmlUrl = parsed.htmlUrl, apkUrl = parsed.apkUrl,
                         apkSizeBytes = parsed.apkSize, body = parsed.body, source = "Gitee"
                     )
-                    if (info.apkUrl != null) {
-                        Log.d(TAG, "Gitee Releases hit: ${parsed.tag}")
-                        return@withContext UpdateResult(code > currentCode, info = info)
-                    }
+                    Log.d(TAG, "Gitee Releases hit: ${parsed.tag}, code=$code")
                 }
             }
         } catch (e: Exception) {
             errors.add("Gitee Releases: ${e.message}")
         }
 
-        // —— 3. 最后试 Gitee Tags ——
+        // —— 2. Gitee Tags（兜底，无 Release 时按约定拼下载链接）——
         try {
-            val parsed = fetchGiteeTags()
-            if (parsed != null) {
+            fetchGiteeTags()?.let { parsed ->
                 val code = parseVersionCode(parsed.tag)
                 if (code > 0 && parsed.apkUrl != null) {
-                    val info = ReleaseInfo(
+                    candidates += ReleaseInfo(
                         versionName = parsed.tag, versionCode = code,
                         htmlUrl = parsed.htmlUrl, apkUrl = parsed.apkUrl,
                         apkSizeBytes = parsed.apkSize, body = parsed.body, source = "Gitee Tags"
                     )
-                    Log.d(TAG, "Gitee Tags hit: ${parsed.tag}")
-                    return@withContext UpdateResult(code > currentCode, info = info)
+                    Log.d(TAG, "Gitee Tags hit: ${parsed.tag}, code=$code")
                 }
             }
         } catch (e: Exception) {
             errors.add("Gitee Tags: ${e.message}")
         }
 
-        UpdateResult(false, error = errors.joinToString(" | ").ifBlank { "无 Release 信息" })
+        // —— 3. GitHub（仅海外或 Gitee 完全不通时才会命中）——
+        try {
+            fetchGitHub()?.let { parsed ->
+                val code = parseVersionCode(parsed.tag)
+                if (code > 0 && parsed.apkUrl != null) {
+                    candidates += ReleaseInfo(
+                        versionName = parsed.tag, versionCode = code,
+                        htmlUrl = parsed.htmlUrl, apkUrl = parsed.apkUrl,
+                        apkSizeBytes = parsed.apkSize, body = parsed.body, source = "GitHub"
+                    )
+                    Log.d(TAG, "GitHub hit: ${parsed.tag}, code=$code")
+                }
+            }
+        } catch (e: Exception) {
+            errors.add("GitHub: ${e.message}")
+            Log.w(TAG, "GitHub failed", e)
+        }
+
+        if (candidates.isEmpty()) {
+            return@withContext UpdateResult(false,
+                error = errors.joinToString(" | ").ifBlank { "无 Release 信息" })
+        }
+
+        val best = candidates.maxByOrNull { it.versionCode }!!
+        Log.d(TAG, "best source=${best.source} tag=${best.versionName} " +
+            "code=${best.versionCode} cur=$currentCode")
+        UpdateResult(best.versionCode > currentCode, info = best)
     }
 
     // ================== 三个 source 的 fetch 函数 ==================
@@ -173,8 +176,9 @@ object UpdateManager {
         if (assets == null) return null
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
-            if (a.optString("name", "").endsWith(".apk", true)) {
-                return a.optString("browser_download_url", null)
+            if (a.optString("name").endsWith(".apk", true)) {
+                val url = a.optString("browser_download_url")
+                if (url.isNotBlank()) return url
             }
         }
         return null
@@ -211,12 +215,13 @@ object UpdateManager {
         if (assets == null) return null
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
-            val name = a.optString("name", "")
+            val name = a.optString("name")
             if (name.endsWith(".apk", true)) {
-                // Gitee 用 browser_download_url 也兼容
-                a.optString("browser_download_url", null)?.let { return it }
-                // fallback：用 download_url
-                a.optString("download_url", null)?.let { return it }
+                // Gitee 用 browser_download_url，缺失时回退到 download_url
+                val url1 = a.optString("browser_download_url")
+                if (url1.isNotBlank()) return url1
+                val url2 = a.optString("download_url")
+                if (url2.isNotBlank()) return url2
             }
         }
         return null
