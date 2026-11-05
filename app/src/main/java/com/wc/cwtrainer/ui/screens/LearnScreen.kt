@@ -201,11 +201,6 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
                 modifier = Modifier.padding(start = 6.dp)
             )
             Spacer(Modifier.weight(1f))
-            WpmAdjuster(
-                wpm = s.learnWpm,
-                onWpm = { app.prefs.update { p -> p.copy(learnWpm = it) } }
-            )
-            Spacer(Modifier.width(8.dp))
             val correctRate = if (app.stats.learnTotal == 0) "—" else
                 String.format("%.0f%%", app.stats.learnCorrect.toFloat() / app.stats.learnTotal * 100f)
             ModeChip("正确率 $correctRate", "${app.stats.learnTotal} 题")
@@ -219,6 +214,21 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
             Pill("码表速查", tab == 0) { tab = 0 }
             Pill("听音辨码", tab == 1) { tab = 1 }
             Pill("看码辨字", tab == 2) { tab = 2 }
+        }
+
+        // 码速调节（独立行，避免撑高标题行产生留白）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            WpmAdjuster(
+                wpm = s.learnWpm,
+                onWpm = { app.prefs.update { p -> p.copy(learnWpm = it) } }
+            )
+            Spacer(Modifier.weight(1f))
+            Text("本板块独立码速", color = TextDim, fontSize = 11.sp)
         }
 
         // 主区
@@ -529,6 +539,16 @@ private fun QuizContent(
                 if (rowOpts.size == 1) Spacer(Modifier.weight(1f))
             }
             Spacer(Modifier.height(10.dp))
+        }
+
+        // 背码建议：听音辨码时只记声音，不记点划形态
+        if (tab == 1) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "建议只背声音，不要背 “·” 和 “—” 的形态",
+                color = TextDim, fontSize = 11.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         // 反馈

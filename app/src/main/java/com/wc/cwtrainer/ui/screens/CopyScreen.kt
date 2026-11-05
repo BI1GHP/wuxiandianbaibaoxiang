@@ -70,6 +70,7 @@ import com.wc.cwtrainer.ui.Surface1
 import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
+import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlinx.coroutines.delay
 
 @Composable
@@ -178,12 +179,29 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
                 modifier = Modifier.padding(start = 6.dp)
             )
             Spacer(Modifier.weight(1f))
-            ModeChip(charsetText(charset), "${s.copyWpm} WPM")
-            Spacer(Modifier.width(8.dp))
             IconButton(
                 label = if (showSettings) "收起" else "设置",
                 active = showSettings
             ) { showSettings = !showSettings }
+        }
+
+        // 码速调节（独立行，标题栏保持单行紧凑）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ModeChip(charsetText(charset), "${s.copyWpm} WPM")
+            Spacer(Modifier.weight(1f))
+            WpmAdjuster(
+                wpm = s.copyWpm,
+                onWpm = {
+                    app.prefs.update { prefs ->
+                        prefs.copy(copyWpm = it, farnsworth = if (prefs.farnsworth > it) 0 else prefs.farnsworth)
+                    }
+                }
+            )
         }
 
         // 设置面板（可折叠）

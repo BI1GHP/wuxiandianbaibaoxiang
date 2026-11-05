@@ -267,7 +267,8 @@ object UpdateManager {
         val message: String = "🔄 点击检查更新",
         val newVersion: String? = null,
         val apkUrl: String? = null,
-        val source: String? = null
+        val source: String? = null,
+        val apkSizeBytes: Long = 0L
     )
 
     private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -287,7 +288,8 @@ object UpdateManager {
                         .format(info.apkSizeBytes / 1024.0 / 1024.0),
                     newVersion = info.versionName,
                     apkUrl = info.apkUrl,
-                    source = info.source
+                    source = info.source,
+                    apkSizeBytes = info.apkSizeBytes
                 )
                 result.error != null -> _flow.value.copy(status = "error", message = "❌ ${result.error}")
                 else -> _flow.value.copy(status = "up_to_date", message = "✅ 已是最新版本（源: ${info?.source ?: "-"}）")
