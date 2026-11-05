@@ -16,11 +16,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +54,7 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(app: AppState, onBack: () -> Unit) {
     val s = app.prefs.data
+    var showLicense by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("设置", onBack)
         Column(
@@ -232,8 +236,52 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 CheckForUpdateButton()
             }
+
+            // 版权链接（纯文字，点击弹出 GNU AGPLv3 许可头）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 18.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "版权 © BI1GHP <2026> · <CW百宝箱>",
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { showLicense = true }
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                )
+            }
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    if (showLicense) {
+        AlertDialog(
+            onDismissRequest = { showLicense = false },
+            title = { Text("GNU Affero 通用公共许可证 v3") },
+            text = {
+                Text(
+                    text = """
+版权 © 2026 BI1GHP
+
+本程序为自由软件：您可以依据由自由软件基金会发布的 GNU Affero 通用公共许可证（版本 3）条款，对其进行再发布及/或修改。
+
+发布本程序是希望它有用，但不提供任何担保；甚至没有适销性或特定用途适用性的默示保证。有关更多细节，请参阅 GNU Affero 通用公共许可证。
+
+您应该已随本程序一并收到 GNU Affero 通用公共许可证的副本。如果没有，请参见 https://www.gnu.org/licenses/ 。
+
+[2026] [BI1GHP]""".trimIndent(),
+                    fontSize = 12.sp,
+                    color = TextMain
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showLicense = false }) { Text("知道了") }
+            }
+        )
     }
 }
 
