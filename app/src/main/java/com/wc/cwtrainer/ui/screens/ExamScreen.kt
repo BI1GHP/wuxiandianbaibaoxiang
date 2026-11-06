@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -42,6 +41,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
@@ -216,20 +216,20 @@ fun ExamScreen(app: AppState, onBack: () -> Unit) {
             )
         }
 
-        // 题库级别（文件夹标签风）
-        Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PaperTab("B 类题库", level == ExamLevel.B) { level = ExamLevel.B }
-            PaperTab("C 类题库", level == ExamLevel.C) { level = ExamLevel.C }
+        // 题库级别（文件夹标签风，两等分）
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PaperTab("B 类题库", level == ExamLevel.B, Modifier.weight(1f)) { level = ExamLevel.B }
+            PaperTab("C 类题库", level == ExamLevel.C, Modifier.weight(1f)) { level = ExamLevel.C }
         }
 
-        // 模式 Tab
-        Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PaperTab("按序背题", mode == 0) { mode = 0 }
-            PaperTab("分类背题", mode == 1) { mode = 1 }
-            PaperTab("错题本", mode == 2) { mode = 2 }
-            PaperTab("模拟考试", mode == 3) { mode = 3 }
+        // 模式 Tab（四等分，占满整行）
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PaperTab("按序背题", mode == 0, Modifier.weight(1f)) { mode = 0 }
+            PaperTab("分类背题", mode == 1, Modifier.weight(1f)) { mode = 1 }
+            PaperTab("错题本", mode == 2, Modifier.weight(1f)) { mode = 2 }
+            PaperTab("模拟考试", mode == 3, Modifier.weight(1f)) { mode = 3 }
         }
 
         when (mode) {
@@ -259,7 +259,7 @@ fun ExamScreen(app: AppState, onBack: () -> Unit) {
                 } else {
                     PracticePane(
                         app = app, level = level, queue = wrongQs,
-                        emptyHint = "", extraTop = {
+                        emptyHint = "", reveal = false, extraTop = {
                             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Text("共 ${wrongQs.size} 题 · 答对自动移出错题本",
@@ -288,13 +288,13 @@ fun ExamScreen(app: AppState, onBack: () -> Unit) {
 @Composable
 private fun PaperHeader(title: String, onBack: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text("‹ 返回", color = PaperDim, fontSize = 14.sp,
             modifier = Modifier.clip(RoundedCornerShape(8.dp))
                 .clickable { onBack() }.padding(horizontal = 6.dp, vertical = 6.dp))
-        Text(title, color = PaperInk, fontSize = 20.sp,
+        Text(title, color = PaperInk, fontSize = 18.sp,
             fontWeight = FontWeight.Bold, fontFamily = ExamFont,
             modifier = Modifier.padding(start = 6.dp))
     }
@@ -302,18 +302,40 @@ private fun PaperHeader(title: String, onBack: () -> Unit) {
 
 /** 文件夹标签式页签 */
 @Composable
-private fun PaperTab(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun PaperTab(
+    text: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 8.dp, bottomEnd = 8.dp))
             .background(if (selected) PaperBlue else PaperCard)
             .border(1.2.dp, if (selected) PaperBlue else PaperLine, RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 8.dp, bottomEnd = 8.dp))
             .clickable { onClick() }
-            .padding(horizontal = 13.dp, vertical = 7.dp)
+            .padding(horizontal = 13.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
     ) {
         Text(text, color = if (selected) Color.White else PaperDim,
             fontSize = 13.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            fontFamily = ExamFont)
+            fontFamily = ExamFont, maxLines = 1)
+    }
+}
+
+/** 纸质小切换标签（仅答案 / 全部高亮） */
+@Composable
+private fun MiniToggle(text: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.clip(RoundedCornerShape(50))
+            .background(if (selected) PaperBlue else PaperCard)
+            .border(1.dp, if (selected) PaperBlue else PaperLine, RoundedCornerShape(50))
+            .clickable { onClick() }
+            .padding(horizontal = 9.dp, vertical = 4.dp)
+    ) {
+        Text(text, color = if (selected) Color.White else PaperDim,
+            fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            fontFamily = ExamFont, maxLines = 1)
     }
 }
 
@@ -338,9 +360,11 @@ private fun ClassifyPane(app: AppState, level: ExamLevel) {
     // 恢复上次分类状态："subMode|secOrType"（0=题型 M/S，1=知识点小节号），退出重进可续
     val saved = remember(level) { app.exam.loadStr("cls:${level.name}") }
     var subMode by remember(level) { mutableIntStateOf(if (saved?.startsWith("1|") == true) 1 else 0) }
-    var pickedSec by remember(level) {
+    var pickedCh by remember(level) {
         mutableStateOf(
-            if (saved?.startsWith("1|") == true) saved.removePrefix("1|").takeIf { it.isNotEmpty() } else null
+            if (saved?.startsWith("1|") == true)
+                saved.removePrefix("1|").substringBefore('.').toIntOrNull()
+            else null
         )
     }
     var pickedMulti by remember(level) {
@@ -352,18 +376,18 @@ private fun ClassifyPane(app: AppState, level: ExamLevel) {
             }
         )
     }
-    LaunchedEffect(level, subMode, pickedSec, pickedMulti) {
+    LaunchedEffect(level, subMode, pickedCh, pickedMulti) {
         val tail = if (subMode == 0) {
             if (pickedMulti == true) "M" else if (pickedMulti == false) "S" else ""
-        } else pickedSec ?: ""
+        } else pickedCh?.toString() ?: ""
         app.exam.saveStr("cls:${level.name}", "$subMode|$tail")
     }
 
     Column(Modifier.fillMaxSize()) {
         Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PaperTab("按题型", subMode == 0) { subMode = 0; pickedSec = null; pickedMulti = null }
-            PaperTab("按知识点", subMode == 1) { subMode = 1; pickedSec = null; pickedMulti = null }
+            PaperTab("按题型", subMode == 0) { subMode = 0; pickedCh = null; pickedMulti = null }
+            PaperTab("按知识点", subMode == 1) { subMode = 1; pickedCh = null; pickedMulti = null }
         }
 
         if (subMode == 0) {
@@ -391,71 +415,65 @@ private fun ClassifyPane(app: AppState, level: ExamLevel) {
                 }
             }
         } else {
-            if (pickedSec == null) {
+            if (pickedCh == null) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                     .padding(horizontal = 14.dp)) {
-                    val secs = QuestionBank.sections(level)
-                    var lastCh = -1
-                    for (sec in secs) {
-                        val ch = sec.substringBefore('.').toIntOrNull() ?: 0
-                        if (ch != lastCh) {
-                            lastCh = ch
-                            Spacer(Modifier.height(10.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${ExamChapters.title(ch)}",
-                                    color = PaperInk, fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold, fontFamily = ExamFont)
-                                Spacer(Modifier.width(8.dp))
-                                Text("第 $ch 章", color = PaperAmber, fontSize = 11.sp,
-                                    fontFamily = ExamFont)
-                                Spacer(Modifier.width(8.dp).height(1.dp))
-                                MorseStrip("10", Modifier.width(26.dp).height(4.dp), dot = 1.4f)
-                            }
-                            Spacer(Modifier.height(6.dp))
-                        }
-                        val n = QuestionBank.countBySection(level, sec)
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("按大类背题", color = PaperInk, fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold, fontFamily = ExamFont)
+                        Spacer(Modifier.width(8.dp))
+                        MorseStrip("10", Modifier.width(26.dp).height(4.dp), dot = 1.4f)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    for (ch in QuestionBank.chapters(level)) {
+                        val n = QuestionBank.countByChapter(level, ch)
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                                 .clip(PaperShape).background(PaperCard)
                                 .border(1.2.dp, PaperLine, PaperShape)
-                                .clickable { pickedSec = sec }
-                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                                .clickable { pickedCh = ch }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // 知识点编号：方格纸样式
+                            // 章号牌
                             Box(
-                                modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(8.dp))
                                     .background(PaperBg)
-                                    .border(1.dp, PaperLine, RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    .border(1.2.dp, PaperLine, RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(sec, color = PaperBlue, fontSize = 13.sp,
+                                Text("$ch", color = PaperBlue, fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                             }
-                            Spacer(Modifier.weight(1f))
-                            Text("$n 题", color = PaperDim, fontSize = 12.sp, fontFamily = ExamFont)
-                            Spacer(Modifier.width(10.dp))
-                            Text("›", color = PaperDim, fontSize = 16.sp)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(ExamChapters.title(ch), color = PaperInk, fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold, fontFamily = ExamFont)
+                                Spacer(Modifier.height(3.dp))
+                                Text("共 $n 题", color = PaperDim, fontSize = 11.sp, fontFamily = ExamFont)
+                            }
+                            Text("›", color = PaperDim, fontSize = 20.sp)
                         }
                     }
                     Spacer(Modifier.height(20.dp))
                 }
             } else {
-                val sec = pickedSec!!
+                val ch = pickedCh!!
                 Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Text("‹ 换小节", color = PaperDim, fontSize = 13.sp,
+                    Text("‹ 换大类", color = PaperDim, fontSize = 13.sp,
                         modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                            .clickable { pickedSec = null }.padding(6.dp))
+                            .clickable { pickedCh = null }.padding(6.dp))
                     Spacer(Modifier.weight(1f))
-                    Text("知识点 $sec · ${QuestionBank.countBySection(level, sec)} 题",
+                    Text("${ExamChapters.title(ch)} · ${QuestionBank.countByChapter(level, ch)} 题",
                         color = PaperBlue, fontSize = 13.sp, fontFamily = ExamFont)
                 }
                 PracticePane(
                     app = app, level = level,
-                    queue = QuestionBank.bySection(level, sec),
-                    emptyHint = "该小节暂无题目",
-                    progressKey = "sec:${level.name}:$sec"
+                    queue = QuestionBank.byChapter(level, ch),
+                    emptyHint = "该大类暂无题目",
+                    progressKey = "ch:${level.name}:$ch"
                 )
             }
         }
@@ -473,6 +491,7 @@ private fun PracticePane(
     queue: List<Question>,
     emptyHint: String,
     progressKey: String? = null,
+    reveal: Boolean = true,
     extraTop: (@Composable () -> Unit)? = null
 ) {
     if (queue.isEmpty()) {
@@ -489,6 +508,8 @@ private fun PracticePane(
     }
     var picked by remember(queue, idx) { mutableStateOf<Set<Int>>(emptySet()) }
     var submitted by remember(queue, idx) { mutableStateOf(false) }
+    // 显示方式：true=只列正确项，false=全部显示并高亮正确答案（仅背题模式）
+    var onlyAnswer by remember { mutableStateOf(app.exam.loadStr("disp:only") == "1") }
 
     if (idx >= queue.size) idx = queue.size - 1
     val q = queue[idx]
@@ -499,10 +520,25 @@ private fun PracticePane(
     Column(Modifier.fillMaxSize()) {
         extraTop?.invoke()
 
-        // 进度条：铅笔线 + 小天线
+        // 进度条 + 显示方式切换
         Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-            Text("${idx + 1} / ${queue.size} · ${q.id} · 知识点 ${q.sec}" + if (q.isMulti) " · 多选题" else "",
-                color = PaperDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${idx + 1} / ${queue.size} · ${q.id} · 知识点 ${q.sec}" + if (q.isMulti) " · 多选题" else "",
+                    color = PaperDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f))
+                if (reveal) {
+                    MiniToggle("仅答案", onlyAnswer) {
+                        onlyAnswer = true
+                        app.exam.saveStr("disp:only", "1")
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    MiniToggle("全部高亮", !onlyAnswer) {
+                        onlyAnswer = false
+                        app.exam.saveStr("disp:only", "0")
+                    }
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
                 .background(PaperRule)) {
@@ -546,7 +582,13 @@ private fun PracticePane(
                                 Text("多选", color = PaperAmber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                             Spacer(Modifier.width(6.dp))
-                            Text("以下选项均需判断", color = PaperDim, fontSize = 10.sp, fontFamily = ExamFont)
+                            Text(
+                                when {
+                                    reveal && onlyAnswer -> "仅显示正确选项"
+                                    reveal -> "多项正确答案，已在选项中标出"
+                                    else -> "以下选项均需判断"
+                                },
+                                color = PaperDim, fontSize = 10.sp, fontFamily = ExamFont)
                         }
                         Spacer(Modifier.height(6.dp))
                     }
@@ -560,69 +602,100 @@ private fun PracticePane(
             }
             Spacer(Modifier.height(10.dp))
 
-            // 选项：答题卡样式
-            q.options.forEachIndexed { i, opt ->
-                val isPicked = i in picked
+            // 选项：背题模式下可只列正确项；错题本保留作答
+            val shownIdx = if (reveal && onlyAnswer) q.options.indices.filter { it in q.ans }
+                           else q.options.indices.toList()
+            shownIdx.forEach { i ->
+                val opt = q.options[i]
                 val isAns = i in q.ans
-                val (bg, border, ink, mark) = when {
-                    submitted && isAns -> PaperQuadruple(PaperGreen.copy(alpha = 0.10f), PaperGreen, PaperGreen, "✓")
-                    submitted && isPicked && !isAns -> PaperQuadruple(PaperRed.copy(alpha = 0.10f), PaperRed, PaperRed, "✗")
-                    isPicked -> PaperQuadruple(PaperBlue.copy(alpha = 0.08f), PaperBlue, PaperBlue, "")
-                    else -> PaperQuadruple(PaperCard, PaperLine, PaperInk, "")
+                val isPicked = i in picked
+                val showAns = reveal || submitted
+                val wrongPick = !reveal && submitted && isPicked && !isAns
+                val bg = when {
+                    showAns && isAns -> PaperGreen.copy(alpha = 0.14f)
+                    wrongPick -> PaperRed.copy(alpha = 0.10f)
+                    isPicked -> PaperBlue.copy(alpha = 0.08f)
+                    else -> PaperCard
+                }
+                val border = when {
+                    showAns && isAns -> PaperGreen
+                    wrongPick -> PaperRed
+                    isPicked -> PaperBlue
+                    else -> PaperLine
+                }
+                val ink = when {
+                    showAns && isAns -> PaperGreen
+                    wrongPick -> PaperRed
+                    isPicked -> PaperBlue
+                    else -> PaperInk
+                }
+                val markBg = when {
+                    showAns && isAns -> PaperGreen
+                    wrongPick -> PaperRed
+                    isPicked -> PaperBlue
+                    else -> PaperBg
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                         .clip(PaperShape).background(bg)
-                        .border(1.2.dp, border, PaperShape)
-                        .clickable(enabled = !submitted) {
+                        .border(if (showAns && isAns) 1.8.dp else 1.2.dp, border, PaperShape)
+                        .clickable(enabled = !reveal && !submitted) {
                             picked = if (q.isMulti) {
                                 if (i in picked) picked - i else picked + i
                             } else {
                                 setOf(i)
                             }
                         }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.Top
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 答题卡圆圈
+                    // 答题卡涂格
                     Box(
-                        modifier = Modifier.size(22.dp).clip(CircleShape)
-                            .background(if (mark == "✓") PaperGreen else if (mark == "✗") PaperRed else if (isPicked) PaperBlue else Color.Transparent)
-                            .border(1.6.dp, if (isPicked || mark.isNotEmpty()) Color.Transparent else border, CircleShape),
+                        modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                            .background(markBg)
+                            .border(1.4.dp, if (markBg == PaperBg) PaperLine else markBg,
+                                RoundedCornerShape(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (mark.isNotEmpty()) {
-                            Text(mark, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        } else if (isPicked) {
-                            Text(letters.getOrNull(i) ?: "?", color = Color.White, fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold)
-                        } else {
-                            Text(letters.getOrNull(i) ?: "?", color = PaperDim, fontSize = 11.sp)
-                        }
+                        Text(
+                            if (wrongPick) "✗" else letters.getOrNull(i) ?: "?",
+                            color = if (markBg == PaperBg) PaperDim else Color.White,
+                            fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
                     }
                     Spacer(Modifier.width(10.dp))
-                    Text(opt, color = ink, fontSize = 14.sp, lineHeight = 21.sp,
+                    Text(opt, color = ink, fontSize = 14.5.sp, lineHeight = 21.sp,
                         fontFamily = ExamFont, modifier = Modifier.weight(1f))
+                    if (showAns && isAns) {
+                        Spacer(Modifier.width(6.dp))
+                        Text("✓ 答案", color = PaperGreen, fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold, fontFamily = ExamFont)
+                    }
                 }
             }
 
-            // 批改结果（红笔/绿笔手写体感觉）
-            if (submitted) {
-                Spacer(Modifier.height(8.dp))
-                val ok = picked == q.ans.toSet()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (ok) "回答正确 ✓" else "正确答案：${q.answerText}",
-                        color = if (ok) PaperGreen else PaperRed, fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold, fontFamily = ExamFont)
-                    Spacer(Modifier.weight(1f))
-                    MorseStrip(if (ok) "1" else "0", Modifier.width(24.dp).height(5.dp),
-                        color = (if (ok) PaperGreen else PaperRed).copy(alpha = 0.5f), dot = 1.8f)
+            // 正确答案汇总
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("正确答案：${q.answerText}",
+                    color = PaperGreen, fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold, fontFamily = ExamFont)
+                Spacer(Modifier.weight(1f))
+                if (!reveal && submitted) {
+                    val ok = picked == q.ans.toSet()
+                    Text(if (ok) "回答正确 ✓" else "回答错误 ✗",
+                        color = if (ok) PaperGreen else PaperRed,
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ExamFont)
+                } else {
+                    MorseStrip("1", Modifier.width(24.dp).height(5.dp),
+                        color = PaperGreen.copy(alpha = 0.5f), dot = 1.8f)
                 }
             }
             Spacer(Modifier.height(12.dp))
 
-            // 多选确认
-            if (q.isMulti && !submitted) {
+            // 多选确认（仅错题本作答模式）
+            if (!reveal && q.isMulti && !submitted) {
                 Box(
                     modifier = Modifier.fillMaxWidth().clip(PaperShape)
                         .background(if (picked.isEmpty()) PaperCard else PaperBlue)
@@ -639,21 +712,27 @@ private fun PracticePane(
             Spacer(Modifier.height(8.dp))
         }
 
-        // 底部翻页（铅笔灰按钮）
+        // 底部翻页（醒目的实心按钮）
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            PaperButton("上一题", enabled = idx > 0, modifier = Modifier.weight(1f)) { idx-- }
-            if (!submitted && !q.isMulti) {
+            PaperButton("‹ 上一题", enabled = idx > 0, modifier = Modifier.weight(1f)) { idx-- }
+            if (reveal) {
+                PaperButton("⟲ 从头", enabled = idx > 0,
+                    modifier = Modifier.weight(1f)) { idx = 0 }
+            }
+            if (!reveal && !q.isMulti && !submitted) {
                 PaperButton("看答案", primary = picked.isNotEmpty(), enabled = picked.isNotEmpty(),
                     modifier = Modifier.weight(1f)) {
                     submitted = true
                 }
             }
-            PaperButton(if (idx < queue.size - 1) "下一题" else "已到末题",
-                enabled = idx < queue.size - 1, modifier = Modifier.weight(1f)) { idx++ }
+            PaperButton(if (idx < queue.size - 1) "下一题 ›" else "已到末题",
+                enabled = idx < queue.size - 1,
+                primary = idx < queue.size - 1,
+                modifier = Modifier.weight(1f)) { idx++ }
         }
     }
 }
@@ -672,10 +751,24 @@ private fun PaperButton(
 ) {
     Box(
         modifier = modifier.clip(PaperShape)
-            .background(if (primary) PaperBlue else PaperCard)
-            .border(1.2.dp, if (primary) PaperBlue else PaperLine, PaperShape)
+            .background(
+                when {
+                    primary -> PaperBlue
+                    enabled -> PaperBg
+                    else -> PaperCard
+                }
+            )
+            .border(
+                1.4.dp,
+                when {
+                    primary -> PaperBlue
+                    enabled -> PaperInk.copy(alpha = 0.35f)
+                    else -> PaperLine
+                },
+                PaperShape
+            )
             .clickable(enabled = enabled) { onClick() }
-            .padding(vertical = 11.dp),
+            .padding(vertical = 13.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(text,
@@ -684,8 +777,8 @@ private fun PaperButton(
                 enabled -> PaperInk
                 else -> PaperDim.copy(alpha = 0.55f)
             },
-            fontSize = 14.sp, fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
-            fontFamily = ExamFont)
+            fontSize = 15.sp, fontWeight = FontWeight.Bold,
+            fontFamily = ExamFont, maxLines = 1)
     }
 }
 
@@ -808,17 +901,15 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                             verticalAlignment = Alignment.Top
                         ) {
                             Box(
-                                modifier = Modifier.size(22.dp).clip(CircleShape)
-                                    .background(if (isPicked) PaperBlue else Color.Transparent)
-                                    .border(1.6.dp, if (isPicked) PaperBlue else PaperDim.copy(alpha = 0.5f), CircleShape),
+                                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                                    .background(if (isPicked) PaperBlue else PaperBg)
+                                    .border(1.4.dp, if (isPicked) PaperBlue else PaperLine, RoundedCornerShape(8.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (isPicked) {
-                                    Text(letters.getOrNull(i) ?: "?", color = Color.White,
-                                        fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                } else {
-                                    Text(letters.getOrNull(i) ?: "?", color = PaperDim, fontSize = 11.sp)
-                                }
+                                Text(letters.getOrNull(i) ?: "?",
+                                    color = if (isPicked) Color.White else PaperDim,
+                                    fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace)
                             }
                             Spacer(Modifier.width(10.dp))
                             Text(opt, color = if (isPicked) PaperBlue else PaperInk,
@@ -904,16 +995,16 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                                 verticalAlignment = Alignment.Top
                             ) {
                                 Box(
-                                    modifier = Modifier.size(22.dp).clip(CircleShape)
-                                        .background(if (mark.isNotEmpty()) (if (mark == "✓") PaperGreen else PaperRed) else Color.Transparent)
-                                        .border(1.6.dp, if (mark.isEmpty()) border else Color.Transparent, CircleShape),
+                                    modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                                        .background(if (mark.isNotEmpty()) (if (mark == "✓") PaperGreen else PaperRed) else PaperBg)
+                                        .border(1.4.dp, if (mark.isEmpty()) PaperLine else Color.Transparent, RoundedCornerShape(8.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (mark.isNotEmpty()) {
-                                        Text(mark, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                    } else {
-                                        Text(letters.getOrNull(i) ?: "?", color = PaperDim, fontSize = 11.sp)
-                                    }
+                                    Text(
+                                        if (mark.isNotEmpty()) mark else letters.getOrNull(i) ?: "?",
+                                        color = if (mark.isNotEmpty()) Color.White else PaperDim,
+                                        fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace)
                                 }
                                 Spacer(Modifier.width(10.dp))
                                 Text(opt, color = ink, fontSize = 14.sp, lineHeight = 21.sp,

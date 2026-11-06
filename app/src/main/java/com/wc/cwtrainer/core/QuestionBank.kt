@@ -55,4 +55,15 @@ object QuestionBank {
     /** 按题型取题（多选/单选） */
     fun byType(level: ExamLevel, multi: Boolean): List<Question> =
         questionsFor(level).filter { it.isMulti == multi }
+
+    /** 该级别所有大类（章）编号，升序 */
+    fun chapters(level: ExamLevel): List<Int> =
+        questionsFor(level).map { it.chapter }.distinct().sorted()
+
+    fun countByChapter(level: ExamLevel, ch: Int): Int =
+        questionsFor(level).count { it.chapter == ch }
+
+    /** 按大类（章）取题 */
+    fun byChapter(level: ExamLevel, ch: Int): List<Question> =
+        questionsFor(level).filter { it.chapter == ch }
 }
