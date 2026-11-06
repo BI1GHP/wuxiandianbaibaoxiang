@@ -107,6 +107,14 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
             accent = Color(0xFF7ED4FF)
         ) { onOpen(AppScreen.TRANSLATOR) }
 
+        Spacer(Modifier.height(10.dp))
+        MenuCard(
+            index = "05",
+            title = "业余无线电考试",
+            desc = "按序背题 · 分类背题 · 错题本 · 模拟考试（B/C 类）",
+            accent = Color(0xFFB388FF)
+        ) { onOpen(AppScreen.EXAM) }
+
         Spacer(Modifier.height(18.dp))
         SectionCard {
             SectionTitle("练习统计")

@@ -26,11 +26,13 @@ import com.wc.cwtrainer.core.AppPrefs
 import com.wc.cwtrainer.core.CwAudio
 import com.wc.cwtrainer.core.Sidetone
 import com.wc.cwtrainer.core.Speaker
+import com.wc.cwtrainer.core.ExamManager
 import com.wc.cwtrainer.core.StatsStore
 import com.wc.cwtrainer.core.UpdateManager
 import com.wc.cwtrainer.ui.WcTheme
 import com.wc.cwtrainer.ui.screens.ContestScreen
 import com.wc.cwtrainer.ui.screens.CopyScreen
+import com.wc.cwtrainer.ui.screens.ExamScreen
 import com.wc.cwtrainer.ui.screens.HomeScreen
 import com.wc.cwtrainer.ui.screens.LearnScreen
 import com.wc.cwtrainer.ui.screens.SettingsScreen
@@ -104,6 +106,7 @@ class MainActivity : ComponentActivity() {
                             AppScreen.LEARN -> LearnScreen(app) { screen = AppScreen.HOME }
                             AppScreen.CONTEST -> ContestScreen(app) { screen = AppScreen.HOME }
                             AppScreen.TRANSLATOR -> TranslatorScreen(app) { screen = AppScreen.HOME }
+                            AppScreen.EXAM -> ExamScreen(app) { screen = AppScreen.HOME }
                             AppScreen.SETTINGS -> SettingsScreen(app) { screen = AppScreen.HOME }
                         }
                     }
@@ -114,11 +117,13 @@ class MainActivity : ComponentActivity() {
 }
 
 class AppState(context: Context) {
+    val appContext = context.applicationContext
     val prefs = AppPrefs(context)
     val stats = StatsStore(context)
     val audio = CwAudio(context)
     val speaker = Speaker(context)
     val sidetone = Sidetone()
+    val exam = ExamManager(context)
 
     fun shutdown() {
         audio.stop()
@@ -127,4 +132,4 @@ class AppState(context: Context) {
     }
 }
 
-enum class AppScreen { HOME, COPY, LEARN, CONTEST, TRANSLATOR, SETTINGS }
+enum class AppScreen { HOME, COPY, LEARN, CONTEST, TRANSLATOR, EXAM, SETTINGS }
