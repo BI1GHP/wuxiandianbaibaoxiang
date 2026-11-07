@@ -247,9 +247,9 @@ object UpdateManager {
         val tag = tagObj.optString("name", "")
         if (tag.isBlank()) return null
         val htmlUrl = "https://gitee.com/$OWNER/$REPO/releases/tag/$tag"
-        // 按发版约定拼下载链接：CW百宝箱_V1.03.apk（中文名需百分号编码）
+        // 按发版约定拼下载链接：CW练考通_V1.03.apk（中文名需百分号编码）
         val apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/" +
-            Uri.encode("CW百宝箱_$tag.apk")
+            Uri.encode("CW练考通_$tag.apk")
         return Parsed(tag = tag, htmlUrl = htmlUrl, body = "", apkUrl = apkUrl, apkSize = 0L)
     }
 
