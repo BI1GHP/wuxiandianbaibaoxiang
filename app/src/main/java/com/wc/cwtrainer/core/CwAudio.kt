@@ -122,14 +122,23 @@ object CwRenderer {
             }
         }
 
-        // —— 背景噪声（静态低通）——
+        // —— 背景噪声：每次随机强度 + 慢起伏 + 随机天电爆音，模拟真实传播条件 ——
         if (noiseLevel > 0f) {
-            val rnd = Random(20261103)
+            val rnd = Random(System.nanoTime())
+            val baseGain = noiseLevel * (0.7f + rnd.nextFloat() * 0.9f)
             var lp = 0f
+            var wander = 0.6f + rnd.nextFloat() * 0.5f   // 慢起伏（传播条件变化）
+            var crash = 0f                                // 天电爆音包络
             for (i in buf.indices) {
                 val white = rnd.nextFloat() * 2f - 1f
                 lp = lp * 0.92f + white * 0.08f
-                buf[i] += lp * noiseLevel * 4f
+                if (i % (SR / 20) == 0) {
+                    wander = (wander + (rnd.nextFloat() - 0.5f) * 0.28f).coerceIn(0.35f, 1.35f)
+                }
+                if (rnd.nextFloat() < 0.0000009f) crash = 0.3f + rnd.nextFloat() * 0.6f
+                crash *= 0.9996f
+                val hiss = (rnd.nextFloat() * 2f - 1f) * crash
+                buf[i] += (lp * 4f * wander + hiss) * baseGain
             }
         }
 
@@ -224,6 +233,127 @@ class CwAudio(context: Context) {
         try { track?.pause(); track?.flush() } catch (_: Exception) {}
         try { track?.release() } catch (_: Exception) {}
         track = null
+        isPlaying = false
+    }
+}
+
+/**
+ * 独立的背噪发生器：用于 SSB 语音播放时垫底噪。
+ * 白噪声经两级低通后模拟 HF 大气噪声，叠加随机天电爆音与慢起伏，
+ * 每段播放的强度与节奏都不相同。
+ */
+class NoiseAudio(context: Context) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var job: Job? = null
+    private var track: AudioTrack? = null
+
+    @Volatile
+    private var running = false
+
+    @Volatile
+    private var session = 0
+
+    var isPlaying by mutableStateOf(false)
+        private set
+
+    fun start(volume: Float = 1f, level: Float = 0.08f) {
+        stop()
+        val vol = volume.coerceIn(0f, 1f)
+        val lv = level.coerceIn(0f, 1f)
+        if (lv <= 0f) return
+        val mySession = ++session
+        running = true
+        isPlaying = true
+
+        job = scope.launch(Dispatchers.Default) {
+            var t: AudioTrack? = null
+            try {
+                val minBuf = AudioTrack.getMinBufferSize(
+                    CwRenderer.SR,
+                    AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+                t = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setSampleRate(CwRenderer.SR)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(max(minBuf, 8192))
+                    .build()
+                track = t
+                t.setVolume((vol * 0.9f).coerceIn(0f, 1f))
+                t.play()
+
+                val rnd = Random(System.nanoTime())
+                val chunk = ShortArray(2048)
+                // 250Hz 高通 + 2800Hz 两级低通：只留话音频段，接近短波接收机的底噪
+                val hpA = 0.966f
+                val lpA = 0.285f
+                var hpX = 0f
+                var hpY = 0f
+                var lp1 = 0f
+                var lp2 = 0f
+                var crash = 0f
+                var wander = 0.55f + rnd.nextFloat() * 0.5f
+                var env = 0f
+                var n = 0L
+                var qsbPhase = rnd.nextDouble() * 6.28
+                while (true) {
+                    val alive = running && session == mySession
+                    val target = if (alive) 1f else 0f
+                    // 慢衰落（QSB）：约 10 秒一个周期，模拟传播条件起伏
+                    qsbPhase += 2.0 * PI * 0.09 * chunk.size / CwRenderer.SR
+                    val qsb = (0.72 + 0.28 * sin(qsbPhase)).toFloat()
+                    for (i in chunk.indices) {
+                        val white = rnd.nextFloat() * 2f - 1f
+                        val hpOut = hpA * (hpY + white - hpX)
+                        hpX = white
+                        hpY = hpOut
+                        lp1 += lpA * (hpOut - lp1)
+                        lp2 += lpA * (lp1 - lp2)
+                        if ((n + i) % (CwRenderer.SR / 8) == 0L) {
+                            wander = (wander + (rnd.nextFloat() - 0.5f) * 0.16f)
+                                .coerceIn(0.45f, 1.25f)
+                        }
+                        // 天电爆音：平均十几秒一次
+                        if (rnd.nextFloat() < 0.0000015f) crash = 0.3f + rnd.nextFloat() * 0.5f
+                        crash *= 0.9994f
+                        val s = (lp2 * 2.4f * wander * qsb + lp2 * crash * 6f) * lv * 2.6f * env
+                        chunk[i] = (s.coerceIn(-0.9f, 0.9f) * 32767f).toInt().toShort()
+                        // 150ms 起落，避免底噪突然出现/消失
+                        env += (target - env) * 0.00025f
+                    }
+                    n += chunk.size
+                    t.write(chunk, 0, chunk.size, AudioTrack.WRITE_BLOCKING)
+                    if (!alive && env < 0.002f) break
+                }
+            } catch (e: Exception) {
+                Log.e("NoiseAudio", "noise failed", e)
+            } finally {
+                try { t?.pause(); t?.flush() } catch (_: Exception) {}
+                try { t?.release() } catch (_: Exception) {}
+                if (track === t) {
+                    track = null
+                    isPlaying = false
+                }
+            }
+        }
+    }
+
+    fun stop() {
+        // 只置停止位，让生成循环淡出后自行释放，避免咔哒声
+        running = false
         isPlaying = false
     }
 }

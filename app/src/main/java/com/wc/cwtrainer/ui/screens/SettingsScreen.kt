@@ -222,7 +222,7 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
             SectionCard {
                 SectionTitle("关于")
                 Text(
-                    text = "CW百宝箱  ${BuildConfig.VERSION_NAME}",
+                    text = "CW练考通  ${BuildConfig.VERSION_NAME}",
                     color = TextMain,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
@@ -245,7 +245,7 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
                 horizontalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "版权 © BI1GHP <2026> · <CW百宝箱>",
+                    text = "版权 © BI1GHP <2026> · <CW练考通>",
                     color = TextDim,
                     fontSize = 11.sp,
                     modifier = Modifier

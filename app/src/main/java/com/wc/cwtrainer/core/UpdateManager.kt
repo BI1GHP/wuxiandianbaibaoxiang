@@ -273,8 +273,35 @@ object UpdateManager {
         val newVersion: String? = null,
         val apkUrl: String? = null,
         val source: String? = null,
-        val apkSizeBytes: Long = 0L
+        val apkSizeBytes: Long = 0L,
+        val body: String = ""          // Release 说明（更新内容），弹窗展示
     )
+
+    /**
+     * 把 Release 说明里的 Markdown 片段整理成弹窗可直接显示的纯文本：
+     * 去掉标题井号、图片、链接地址，列表项换成中文圆点。
+     */
+    fun displayNotes(raw: String): String {
+        if (raw.isBlank()) return ""
+        return raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("![") }
+            .joinToString("\n") { line ->
+                val cleaned = line
+                    .replace(Regex("!\\[[^]]*]\\([^)]*\\)"), "")
+                    .replace(Regex("\\[([^]]+)]\\([^)]*\\)"), "\$1")
+                    .replace("**", "")
+                    .replace("`", "")
+                    .trimStart('#', ' ')
+                    .trim()
+                when {
+                    cleaned.startsWith("- ") -> "· " + cleaned.drop(2).trim()
+                    cleaned.startsWith("* ") -> "· " + cleaned.drop(2).trim()
+                    else -> cleaned
+                }
+            }
+            .take(2000)
+    }
 
     private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _flow = MutableStateFlow(Flow())
@@ -294,7 +321,8 @@ object UpdateManager {
                     newVersion = info.versionName,
                     apkUrl = info.apkUrl,
                     source = info.source,
-                    apkSizeBytes = info.apkSizeBytes
+                    apkSizeBytes = info.apkSizeBytes,
+                    body = info.body
                 )
                 result.error != null -> _flow.value.copy(status = "error", message = "❌ ${result.error}")
                 else -> _flow.value.copy(status = "up_to_date", message = "✅ 已是最新版本（源: ${info?.source ?: "-"}）")

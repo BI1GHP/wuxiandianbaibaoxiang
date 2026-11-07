@@ -31,8 +31,8 @@ android {
         applicationId = "com.wc.cwtrainer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 116
-        versionName = "V1.16"
+        versionCode = 200
+        versionName = "V2.00"
     }
 
     signingConfigs {
@@ -57,6 +57,11 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+    }
+
+    // 词库 mp3 必须保持未压缩，运行时才能用 AssetFileDescriptor 交给 MediaCodec 解码
+    androidResources {
+        noCompress += listOf("mp3")
     }
 
     compileOptions {

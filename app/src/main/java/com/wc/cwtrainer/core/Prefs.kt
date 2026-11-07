@@ -24,6 +24,7 @@ data class SettingsData(
     val copyWpm: Int = 20,
     val learnWpm: Int = 20,
     val contestWpm: Int = 25,
+    val contestMode: ContestMode = ContestMode.CW,
     val translatorWpm: Int = 20
 )
 
@@ -52,6 +53,8 @@ class AppPrefs(context: Context) {
         copyWpm = sp.getInt("copyWpm", 20),
         learnWpm = sp.getInt("learnWpm", 20),
         contestWpm = sp.getInt("contestWpm", 25),
+        contestMode = runCatching { ContestMode.valueOf(sp.getString("contestMode", "CW")!!) }
+            .getOrDefault(ContestMode.CW),
         translatorWpm = sp.getInt("translatorWpm", 20)
     )
 
@@ -73,6 +76,7 @@ class AppPrefs(context: Context) {
             .putInt("copyWpm", next.copyWpm)
             .putInt("learnWpm", next.learnWpm)
             .putInt("contestWpm", next.contestWpm)
+            .putString("contestMode", next.contestMode.name)
             .putInt("translatorWpm", next.translatorWpm)
             .apply()
     }

@@ -50,7 +50,7 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "CW百宝箱",
+                    text = "CW练考通",
                     color = TextMain,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
@@ -95,7 +95,7 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
         MenuCard(
             index = "03",
             title = "赛事听抄",
-            desc = "CW 赛事场景，盲听接收、频谱瀑布、信号报告与序号",
+            desc = "CW / SSB 赛事场景，盲听接收、频谱瀑布、信号报告与序号",
             accent = Color(0xFFFF9F6B)
         ) { onOpen(AppScreen.CONTEST) }
 

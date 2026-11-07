@@ -11,6 +11,7 @@ data class ContestStation(
     val accent: String,
     val call: String,
     val localeTag: String,
+    val voiceKey: String,
     val style: PhoneticStyle,
     val rate: Float,
     val pitch: Float,
@@ -36,25 +37,45 @@ object ContestGen {
         val prefixes: List<String>,
         val localeTag: String,
         val style: PhoneticStyle,
-        val accent: String
+        val accent: String,
+        val suffix: IntRange = 2..3
     )
 
+    // 呼号按 ITU 前缀分配规则生成：国家前缀 + 分区数字 + 1~3 位字母后缀。
+    // 每个国家只列出真实在用、比赛中常见的呼号段，避免出现 "意大利 IA1XYZ" 这类越界呼号。
     private val countries = listOf(
-        Country("美国", listOf("W", "K", "N", "AA", "AB", "AC"), "en-US", PhoneticStyle.NATO, "美式英语"),
-        Country("英国", listOf("G", "M", "2E", "2M"), "en-GB", PhoneticStyle.NATO, "英式英语"),
-        Country("德国", listOf("DL", "DJ", "DK", "DA", "DB"), "de-DE", PhoneticStyle.GERMAN, "德语口音 · 德式字母解释法"),
-        Country("日本", listOf("JA", "JH", "JE", "JR", "JG"), "ja-JP", PhoneticStyle.JAPANESE, "日式英语 · 和制读音"),
-        Country("意大利", listOf("I", "IK", "IZ", "IU"), "it-IT", PhoneticStyle.ITALIAN, "意大利语腔 · 意式字母解释法"),
-        Country("西班牙", listOf("EA", "EB", "EC", "ED"), "es-ES", PhoneticStyle.SPANISH, "西班牙语腔 · 西式字母解释法"),
-        Country("法国", listOf("F", "TM", "F5"), "fr-FR", PhoneticStyle.NATO, "法语腔"),
-        Country("俄罗斯", listOf("R", "UA", "RA", "RV", "RW"), "ru-RU", PhoneticStyle.NATO, "俄语腔"),
-        Country("巴西", listOf("PY", "PP", "PT", "PU"), "pt-BR", PhoneticStyle.NATO, "葡萄牙语腔"),
-        Country("中国", listOf("BG", "BY", "BD", "BA"), "zh-CN", PhoneticStyle.NATO, "中式英语腔"),
-        Country("韩国", listOf("HL", "DS", "DT", "6K"), "ko-KR", PhoneticStyle.NATO, "韩式英语腔"),
-        Country("澳大利亚", listOf("VK", "VK2", "VK4"), "en-AU", PhoneticStyle.NATO, "澳洲英语"),
-        Country("瑞典", listOf("SM", "SA", "SB", "SC"), "sv-SE", PhoneticStyle.NATO, "北欧腔"),
-        Country("波兰", listOf("SP", "SN", "SO", "SQ"), "pl-PL", PhoneticStyle.NATO, "波兰腔"),
-        Country("荷兰", listOf("PA", "PB", "PD", "PE"), "nl-NL", PhoneticStyle.NATO, "荷兰腔")
+        Country("美国", listOf("K", "W", "N", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AI", "AJ", "AK",
+            "KA", "KB", "KC", "KD", "KE", "KF", "KG", "KI", "KJ", "KK", "KL", "KM", "KN", "KO",
+            "KP", "KQ", "KR", "KS", "KT", "KU", "KV", "KW", "KX", "KY", "KZ"),
+            "en-US", PhoneticStyle.NATO, "美式英语", 1..3),
+        Country("英国", listOf("G", "M", "2E", "2M", "GM", "GW", "GD", "GI", "GJ", "GK"),
+            "en-GB", PhoneticStyle.NATO, "英式英语"),
+        Country("德国", listOf("DA", "DB", "DC", "DD", "DF", "DG", "DH", "DJ", "DK", "DL", "DM", "DN", "DO", "DP", "DQ", "DR"),
+            "de-DE", PhoneticStyle.GERMAN, "德语口音 · 德式字母解释法"),
+        Country("日本", listOf("JA", "JE", "JF", "JG", "JH", "JI", "JJ", "JK", "JL", "JM", "JN", "JO", "JP", "JQ", "JR", "JS"),
+            "ja-JP", PhoneticStyle.JAPANESE, "日式英语 · 和制读音"),
+        Country("意大利", listOf("I", "IK", "IZ", "IU", "II", "IW", "IS", "IN", "IR"),
+            "it-IT", PhoneticStyle.ITALIAN, "意大利语腔 · 意式字母解释法"),
+        Country("西班牙", listOf("EA", "EB", "EC", "ED", "EE", "EF", "EG", "EH"),
+            "es-ES", PhoneticStyle.SPANISH, "西班牙语腔 · 西式字母解释法"),
+        Country("法国", listOf("F", "TM"),
+            "fr-FR", PhoneticStyle.NATO, "法语腔"),
+        Country("俄罗斯", listOf("R", "RA", "RV", "RW", "RX", "RZ", "UA", "UB", "UC", "UD", "UF", "UG"),
+            "ru-RU", PhoneticStyle.NATO, "俄语腔"),
+        Country("巴西", listOf("PY", "PT", "PP", "PU", "PR", "PS", "PV", "PW", "PX", "ZV", "ZW", "ZZ"),
+            "pt-BR", PhoneticStyle.NATO, "葡萄牙语腔"),
+        Country("中国", listOf("BG", "BD", "BA", "BY", "BT", "BZ", "BH", "BI", "BJ", "BL", "BM", "BN"),
+            "zh-CN", PhoneticStyle.NATO, "中式英语腔"),
+        Country("韩国", listOf("HL", "DS", "DT", "6K", "6L", "6M", "6N"),
+            "ko-KR", PhoneticStyle.NATO, "韩式英语腔"),
+        Country("澳大利亚", listOf("VK", "AX"),
+            "en-AU", PhoneticStyle.NATO, "澳洲英语"),
+        Country("瑞典", listOf("SA", "SB", "SC", "SD", "SE", "SF", "SG", "SH", "SI", "SJ", "SK", "SL", "SM", "8S"),
+            "sv-SE", PhoneticStyle.NATO, "北欧腔"),
+        Country("波兰", listOf("SN", "SO", "SP", "SQ", "SR", "HF", "3Z"),
+            "pl-PL", PhoneticStyle.NATO, "波兰腔"),
+        Country("荷兰", listOf("PA", "PB", "PC", "PD", "PE", "PF", "PG", "PH", "PI"),
+            "nl-NL", PhoneticStyle.NATO, "荷兰腔")
     )
 
     private val habits = listOf(
@@ -72,27 +93,26 @@ object ContestGen {
 
     private val fillers = listOf("", "", "", "ah", "hi", "okay")
 
-    private val closings = listOf(
-        "QSL, good luck.",
-        "Roger, QRZ contest.",
-        "Thanks, seventy three.",
-        "Please copy.",
-        "Back to you.",
-        "Good luck in the contest."
-    )
-
     fun station(rng: Random = Random): ContestStation {
         val c = countries[rng.nextInt(countries.size)]
         val prefix = c.prefixes[rng.nextInt(c.prefixes.size)]
         val digit = rng.nextInt(10)
-        val suffixLen = if (rng.nextBoolean()) 2 else 3
+        val suffixLen = c.suffix.first + rng.nextInt(c.suffix.last - c.suffix.first + 1)
         val suffix = (1..suffixLen).map { ('A' + rng.nextInt(26)) }.joinToString("")
         val call = prefix + digit + suffix
+        // 同一国家也换人：男声 42%、女声 36%、老年 22%
+        val pick = rng.nextFloat()
+        val variant = when {
+            pick < 0.22f -> "-s"
+            pick < 0.58f -> "-f"
+            else -> ""
+        }
         return ContestStation(
             country = c.name,
             accent = c.accent,
             call = call,
             localeTag = c.localeTag,
+            voiceKey = c.localeTag + variant,
             style = c.style,
             rate = 0.85f + rng.nextFloat() * 0.35f,
             pitch = 0.85f + rng.nextFloat() * 0.35f,
@@ -172,20 +192,33 @@ object ContestGen {
 
     fun script(st: ContestStation, mode: ContestMode, rng: Random = Random): String {
         return if (mode == ContestMode.SSB) {
+            // SSB 只报三要素：呼号（字母解释法）、信号报告、序号，不加 CQ / 客套话
             val callWords = spellCall(st.call, st.style, rng)
-            val opening = listOf(
-                "CQ contest, CQ contest.",
-                "CQ test, CQ test.",
-                "QRZ contest, QRZ contest."
-            )[rng.nextInt(3)]
-            val fill = if (st.filler.isEmpty()) "" else ", ${st.filler},"
             val reportWords = if (st.report == "5NN") "five nine nine" else "five nine"
-            val closing = closings[rng.nextInt(closings.size)]
-            "$fill $opening This is $callWords, $callWords. You are $reportWords, number ${serialSpoken(st.serial)}. $closing"
+            "This is $callWords, $callWords. $reportWords, ${serialSpoken(st.serial)}."
         } else {
             val call = st.call
             val report = if (st.report == "5NN") "5NN" else "599"
             "$call TEST $call $report $report ${st.serial} K"
+        }
+    }
+
+    /**
+     * SSB 报文的单词序列（供内置真人语音库逐词播放）：
+     * This is + 呼号（两遍，字母解释法）+ 信号报告 + 序号，只有这三要素。
+     */
+    fun ssbWords(st: ContestStation, rng: Random = Random): List<String> {
+        val callWords = spellCall(st.call, st.style, rng).split(" ").filter { it.isNotBlank() }
+        val report = if (st.report == "5NN") listOf("five nine nine") else listOf("five nine")
+        val serial = st.serial.mapNotNull { c ->
+            if (c.isDigit()) digitWords[c - '0'] else null
+        }
+        return buildList {
+            add("This is")
+            addAll(callWords)
+            addAll(callWords)
+            addAll(report)
+            addAll(serial)
         }
     }
 

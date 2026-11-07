@@ -119,9 +119,9 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     var serialIn by remember { mutableStateOf(TextFieldValue("")) }
     var check by remember { mutableStateOf<ContestCheck?>(null) }
 
-    // 强制 CW 模式
-    val mode = ContestMode.CW
-    val script = remember(station) { ContestGen.script(station, mode) }
+    // CW / SSB 模式（SSB 用系统 TTS 模仿各国口音播报）
+    var mode by remember { mutableStateOf(s.contestMode) }
+    val script = remember(station, mode) { ContestGen.script(station, mode) }
 
     // —— 侧音状态：监听 sidetone.gated 来驱动频谱瀑布的"发码亮带"效果 ——
     var keying by remember { mutableStateOf(false) }
@@ -146,6 +146,10 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     fun stop() {
         playing = false; nextReplayIn = 0
         app.audio.stop()
+        app.voice.stop()
+        app.radio.stop()
+        app.voiceBank.stop()
+        app.speaker.stop()
     }
     fun newStation() {
         stop()
@@ -156,26 +160,70 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     fun play() {
         check = null
         app.audio.stop()
+        app.radio.stop()
+        app.voiceBank.stop()
+        app.speaker.stop()
         playing = true
         loopSession++
     }
 
     // —— 自动循环播放：一遍播完静默 5 秒后自动重播，直至点"停止"或换台/离开 ——
-    LaunchedEffect(loopSession) {
+    LaunchedEffect(loopSession, mode) {
         if (loopSession == 0) return@LaunchedEffect
+        // 模式切换会重启本协程，先掐掉上一种模式的残留声音（底噪是独立通道，不动）
+        app.audio.stop()
+        app.voice.stop()
+        app.radio.stop()
+        app.voiceBank.stop()
+        app.speaker.stop()
         while (playing) {
             // script/station 是 state 委托，循环内读取始终拿到当前台站的报文
             // 码速/音调/音量每轮重播实时读取，用户调节后下一轮自动生效，无需停止重开
             val now = app.prefs.data
-            app.audio.play(
-                voices = listOf(VoiceSpec(
-                    text = script,
-                    fist = station.cwFist.copy(wpm = now.contestWpm.toDouble()),
-                    toneHz = now.toneHz.toDouble()
-                )),
-                volume = now.volume, noiseLevel = now.noiseLevel
-            )
-            while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
+            if (mode == ContestMode.CW) {
+                app.audio.play(
+                    voices = listOf(VoiceSpec(
+                        text = script,
+                        fist = station.cwFist.copy(wpm = now.contestWpm.toDouble()),
+                        toneHz = now.toneHz.toDouble()
+                    )),
+                    volume = now.volume, noiseLevel = 0f
+                )
+                while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
+            } else {
+                // SSB：内置真人语音库（各国母语音色，天然口音），不加底噪
+                // 台站自身的 rate 是随机的（0.85~1.2），这里只做大范围收口，
+                // 保留每台之间的语速差异，避免每个台听起来一个速度
+                val rate = ((0.78f + now.contestWpm / 140f) * station.rate)
+                    .coerceIn(0.88f, 1.12f)
+                val bank = app.voiceBank.play(
+                    ContestGen.ssbWords(station), station.voiceKey, rate, now.volume
+                )
+                if (bank.isFailure) {
+                    // 词库缺词：退回系统 TTS 合成（可带各国口音）
+                    val radio = app.radio.play(script, station.localeTag, rate, station.pitch, now.volume)
+                    if (radio.isFailure) {
+                        // 引擎不支持合成到文件：直接播系统 TTS 原声
+                        val spoken = app.speaker.speak(script, station.localeTag, rate, station.pitch)
+                        if (spoken.isFailure) {
+                            // 设备完全没有语音包：改用内置人声合成（无需下载任何组件）
+                            val local = app.voice.speak(script, station.pitch, rate)
+                            if (local.isFailure) {
+                                // 仍失败：字母解释法用 CW 拍发兜底
+                                app.audio.play(
+                                    voices = listOf(VoiceSpec(
+                                        text = ContestGen.ssbPhoneticCwScript(station),
+                                        fist = station.cwFist.copy(wpm = now.contestWpm.toDouble()),
+                                        toneHz = now.toneHz.toDouble()
+                                    )),
+                                    volume = now.volume, noiseLevel = 0f
+                                )
+                                while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
+                            }
+                        }
+                    }
+                }
+            }
             if (!playing) break
             for (sec in 5 downTo 1) {
                 nextReplayIn = sec
@@ -193,7 +241,17 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     }
 
     DisposableEffect(Unit) {
-        onDispose { app.sidetone.stop() }
+        // 底噪是独立通道：进入赛事页就开始实时播放，与是否在发报/播报无关
+        app.noise.start(app.prefs.data.volume, 0.075f)
+        onDispose {
+            app.sidetone.stop()
+            app.audio.stop()
+            app.noise.stop()
+            app.voice.stop()
+            app.radio.stop()
+            app.voiceBank.stop()
+            app.speaker.stop()
+        }
     }
 
     Column(Modifier.fillMaxSize().background(PanelBg)) {
@@ -203,11 +261,11 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                 .background(Brush.verticalGradient(listOf(PanelBg, Color(0xFF0E1116))))
         ) {
             Spacer(Modifier.height(10.dp))
-            MetalHeader(onBack = { onBack() }, title = "CW 赛事听抄", subtitle = "模拟电台面板")
+            MetalHeader(onBack = { onBack() }, title = "CW / SSB 赛事听抄", subtitle = "模拟电台面板")
             Spacer(Modifier.height(10.dp))
 
             // 频率面板（只显示频率 + 模式，不显示对方呼号 —— 真实电台你不知道对方是谁）
-            FrequencyPanel(pulse)
+            FrequencyPanel(pulse, mode)
             Spacer(Modifier.height(10.dp))
 
             // 模式灯 + 状态灯：独立一行，左右平铺
@@ -215,20 +273,28 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(Modifier.weight(1f)) { FixedModeLight(pulse = pulse) }
+                Box(Modifier.weight(1f)) { FixedModeLight(pulse = pulse, mode = mode) }
                 Box(Modifier.weight(1f)) { StatusLeds(playing = playing, pulse = pulse) }
             }
             Spacer(Modifier.height(8.dp))
 
-            // 赛事码速调节（独立于全局设置）
+            // CW/SSB 切换 + 对方码速：同一行，居中，不改变既有布局
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                ModeToggle(mode = mode, onMode = { m ->
+                    if (m != mode) {
+                        mode = m
+                        app.prefs.update { p -> p.copy(contestMode = m) }
+                    }
+                })
+                Spacer(Modifier.width(10.dp))
                 WpmAdjuster(
                     wpm = s.contestWpm,
                     onWpm = { app.prefs.update { p -> p.copy(contestWpm = it) } },
-                    label = "对方码速"
+                    label = if (mode == ContestMode.CW) "对方码速" else "对方语速"
                 )
             }
             Spacer(Modifier.height(10.dp))
@@ -300,7 +366,7 @@ private fun Screw() {
 }
 
 @Composable
-private fun FrequencyPanel(pulse: Float) {
+private fun FrequencyPanel(pulse: Float, mode: ContestMode) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
             .clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
@@ -314,7 +380,7 @@ private fun FrequencyPanel(pulse: Float) {
                 fontFamily = FontFamily.Monospace)
             Spacer(Modifier.width(14.dp))
             Column {
-                Text("CW", color = LedCyan.copy(alpha = 0.9f),
+                Text(if (mode == ContestMode.CW) "CW" else "USB", color = LedCyan.copy(alpha = 0.9f),
                     fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                 Text("VFO  A", color = LedDim, fontSize = 9.sp,
                     fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 1.dp))
@@ -327,7 +393,7 @@ private fun FrequencyPanel(pulse: Float) {
 }
 
 @Composable
-private fun FixedModeLight(pulse: Float) {
+private fun FixedModeLight(pulse: Float, mode: ContestMode) {
     Column(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
             .border(1.dp, PanelLine, RoundedCornerShape(10.dp)).padding(10.dp)
@@ -336,26 +402,58 @@ private fun FixedModeLight(pulse: Float) {
             fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    Modifier.size(14.dp).clip(CircleShape).background(LedGreen)
-                        .border(1.dp, PanelLine, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) { Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.8f))) }
-                Text("CW", color = LedGreen, fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp))
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    Modifier.size(14.dp).clip(CircleShape).background(LedDim)
-                        .border(1.dp, PanelLine, CircleShape)
-                )
-                Text("SSB", color = LedDim, fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp))
-            }
+            ModeLamp("CW", mode == ContestMode.CW)
+            ModeLamp("SSB", mode == ContestMode.SSB)
         }
+    }
+}
+
+/** 模式指示灯：选中亮绿灯 */
+@Composable
+private fun ModeLamp(label: String, on: Boolean) {
+    val c = if (on) LedGreen else LedDim
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(14.dp).clip(CircleShape).background(c)
+                .border(1.dp, PanelLine, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (on) Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.8f)))
+        }
+        Text(label, color = c, fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+/** CW / SSB 切换开关：与码速调节并排的紧凑分段控件 */
+@Composable
+private fun ModeToggle(mode: ContestMode, onMode: (ContestMode) -> Unit) {
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(PanelRecessed)
+            .border(1.dp, PanelLine, RoundedCornerShape(8.dp)).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        ModeSegment("CW", mode == ContestMode.CW) { onMode(ContestMode.CW) }
+        ModeSegment("SSB", mode == ContestMode.SSB) { onMode(ContestMode.SSB) }
+    }
+}
+
+@Composable
+private fun ModeSegment(text: String, on: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.clip(RoundedCornerShape(6.dp))
+            .background(if (on) LedAmber.copy(alpha = 0.20f) else Color.Transparent)
+            .clickable { onClick() }
+            .padding(horizontal = 9.dp, vertical = 5.dp)
+    ) {
+        Text(
+            text,
+            color = if (on) LedAmber else LedDim,
+            fontSize = 11.sp,
+            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+            fontFamily = FontFamily.Monospace
+        )
     }
 }
 

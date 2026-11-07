@@ -1,6 +1,7 @@
 package com.wc.cwtrainer.core
 
 import android.content.Context
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.runtime.getValue
@@ -8,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 import java.util.Locale
 
 /**
@@ -81,19 +83,8 @@ class Speaker(context: Context) {
         val engine = tts ?: return Result.failure(IllegalStateException("TTS not initialized"))
         if (!engineOk) return Result.failure(IllegalStateException("No TTS engine available"))
 
-        // 策略：目标可用 → 目标；同语系可用 → 同语系；否则 en-US；再失败 → 失败
-        val wanted = Locale.forLanguageTag(wantedTag)
-        val engineSupports = { loc: Locale ->
-            runCatching { engine.isLanguageAvailable(loc) }.getOrDefault(-1) >= 0
-        }
-
-        val actualLocale: Locale = when {
-            engineSupports(wanted) -> wanted
-            // 同语系兜底：比如 de-DE 不可用就找任意 de_*
-            engineSupports(Locale(wanted.language)) -> Locale(wanted.language)
-            engineSupports(Locale.US) -> Locale.US
-            else -> return Result.failure(IllegalStateException("No supported TTS locale"))
-        }
+        val actualLocale = resolveLocale(engine, wantedTag)
+            ?: return Result.failure(IllegalStateException("No supported TTS locale"))
         val actualTag = actualLocale.toLanguageTag()
 
         runCatching { engine.setLanguage(actualLocale) }
@@ -114,6 +105,55 @@ class Speaker(context: Context) {
         val ok = withTimeoutOrNull(45_000) { deferred.await() }
         return if (ok != false) Result.success(actualTag)
         else Result.failure(IllegalStateException("utterance failed"))
+    }
+
+    /** 同 speak() 的选语言策略，返回引擎实际可用的 Locale */
+    private fun resolveLocale(engine: TextToSpeech, wantedTag: String): Locale? {
+        val wanted = Locale.forLanguageTag(wantedTag)
+        val supports = { loc: Locale ->
+            runCatching { engine.isLanguageAvailable(loc) }.getOrDefault(-1) >= 0
+        }
+        return when {
+            supports(wanted) -> wanted
+            // 同语系兜底：比如 de-DE 不可用就找任意 de_*
+            supports(Locale(wanted.language)) -> Locale(wanted.language)
+            supports(Locale.US) -> Locale.US
+            else -> null
+        }
+    }
+
+    /**
+     * 把语音合成到 WAV 文件（而不是直接播），供上层做单边带滤波等后期处理。
+     * 大多数引擎输出 16bit PCM WAV；失败时调用方回退到 speak()。
+     */
+    suspend fun synthesizeToFile(
+        text: String, wantedTag: String, rate: Float, pitch: Float, file: File
+    ): Result<Unit> {
+        withTimeoutOrNull(3000) { ready.await() }
+        val engine = tts ?: return Result.failure(IllegalStateException("TTS not initialized"))
+        if (!engineOk) return Result.failure(IllegalStateException("No TTS engine available"))
+        val locale = resolveLocale(engine, wantedTag)
+            ?: return Result.failure(IllegalStateException("No supported TTS locale"))
+
+        runCatching { engine.setLanguage(locale) }
+        engine.setSpeechRate(rate.coerceIn(0.5f, 2.0f))
+        engine.setPitch(pitch.coerceIn(0.5f, 2.0f))
+
+        val deferred = CompletableDeferred<Boolean>()
+        pending?.complete(false)
+        pending = deferred
+        val id = "syn-${++counter}"
+        pendingId = id
+        runCatching { file.parentFile?.mkdirs(); if (file.exists()) file.delete() }
+        val res = engine.synthesizeToFile(text, Bundle(), file, id)
+        if (res != TextToSpeech.SUCCESS) {
+            pending = null
+            pendingId = null
+            return Result.failure(IllegalStateException("synthesizeToFile rejected"))
+        }
+        val ok = withTimeoutOrNull(60_000) { deferred.await() }
+        return if (ok == true && file.exists() && file.length() > 100) Result.success(Unit)
+        else Result.failure(IllegalStateException("synthesize failed"))
     }
 
     fun stop() {
