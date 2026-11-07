@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.random.Random
 
 /** 错题本条目 */
@@ -13,7 +15,7 @@ data class WrongItem(
     val lastWrongAt: Long
 )
 
-/** 模拟考试：随机抽题（B 50 题/对 40 过；C 80 题/对 60 过），判分，错题入库 */
+/** 模拟考试：随机抽题（B 60 题/对 45 过；C 90 题/对 70 过），限时判分，错题入库，成绩存档 */
 class ExamManager(context: Context) {
 
     private val sp = context.getSharedPreferences("wc_exam", Context.MODE_PRIVATE)
@@ -22,6 +24,12 @@ class ExamManager(context: Context) {
     var wrongB by mutableStateOf(loadWrong(ExamLevel.B))
         private set
     var wrongC by mutableStateOf(loadWrong(ExamLevel.C))
+        private set
+
+    /** 成绩记录（最新在前，最多 10 条） */
+    var historyB by mutableStateOf(loadHistory(ExamLevel.B))
+        private set
+    var historyC by mutableStateOf(loadHistory(ExamLevel.C))
         private set
 
     private fun loadWrong(level: ExamLevel): Map<String, WrongItem> {
@@ -82,11 +90,13 @@ class ExamManager(context: Context) {
 
     // ========== 模拟考试 ==========
 
-    /** 随机抽题 */
+    /** 随机抽题：按级别规定的单选/多选数量分别抽取后混排 */
     fun drawExam(level: ExamLevel, seed: Long? = null): List<Question> {
-        val pool = QuestionBank.questionsFor(level).toMutableList()
-        pool.shuffle(if (seed != null) Random(seed) else Random)
-        return pool.take(level.examCount)
+        val rnd = if (seed != null) Random(seed) else Random
+        val all = QuestionBank.questionsFor(level)
+        val singles = all.filter { !it.isMulti }.shuffled(rnd).take(level.singleCount)
+        val multis = all.filter { it.isMulti }.shuffled(rnd).take(level.multiCount)
+        return (singles + multis).shuffled(rnd)
     }
 
     /** 判分：所选集合须与正确答案完全一致 */
@@ -122,6 +132,61 @@ class ExamManager(context: Context) {
         }
     }
 
+    // ========== 成绩记录（最多 10 条，超出覆盖最早一条） ==========
+
+    fun history(level: ExamLevel): List<ExamRecord> =
+        if (level == ExamLevel.B) historyB else historyC
+
+    /** 交卷后追加一条成绩记录 */
+    fun addRecord(result: ExamResult) {
+        val rec = ExamRecord(
+            at = System.currentTimeMillis(),
+            correct = result.correct,
+            total = result.total,
+            passed = result.passed,
+            timeMs = result.timeMs
+        )
+        val list = (listOf(rec) + history(result.level)).take(MAX_RECORDS)
+        if (result.level == ExamLevel.B) historyB = list else historyC = list
+        saveHistory(result.level, list)
+    }
+
+    fun clearHistory(level: ExamLevel) {
+        if (level == ExamLevel.B) historyB = emptyList() else historyC = emptyList()
+        sp.edit().remove("hist:${level.name}").apply()
+    }
+
+    private fun loadHistory(level: ExamLevel): List<ExamRecord> {
+        val raw = sp.getString("hist:${level.name}", null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                ExamRecord(
+                    at = o.optLong("at"),
+                    correct = o.optInt("correct"),
+                    total = o.optInt("total"),
+                    passed = o.optBoolean("passed"),
+                    timeMs = o.optLong("timeMs")
+                )
+            }.take(MAX_RECORDS)
+        }.getOrDefault(emptyList())
+    }
+
+    private fun saveHistory(level: ExamLevel, list: List<ExamRecord>) {
+        val arr = JSONArray()
+        list.forEach { r ->
+            arr.put(JSONObject().apply {
+                put("at", r.at)
+                put("correct", r.correct)
+                put("total", r.total)
+                put("passed", r.passed)
+                put("timeMs", r.timeMs)
+            })
+        }
+        sp.edit().putString("hist:${level.name}", arr.toString()).apply()
+    }
+
     // ========== 背题进度记忆（按序/分类背题，退出重进可续） ==========
 
     /** 记忆背题位置 */
@@ -137,4 +202,9 @@ class ExamManager(context: Context) {
     }
 
     fun loadStr(key: String): String? = sp.getString("st:$key", null)
+
+    companion object {
+        /** 每个级别保留的成绩记录条数 */
+        const val MAX_RECORDS = 10
+    }
 }

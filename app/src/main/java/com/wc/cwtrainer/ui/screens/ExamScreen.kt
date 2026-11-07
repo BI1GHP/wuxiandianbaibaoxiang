@@ -47,10 +47,15 @@ import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.core.ExamChapters
 import com.wc.cwtrainer.core.ExamLevel
+import com.wc.cwtrainer.core.ExamRecord
 import com.wc.cwtrainer.core.Question
 import com.wc.cwtrainer.core.QuestionBank
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 // ============================================================
 //  纸质护眼 · 课堂学习风配色
@@ -794,6 +799,44 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
     var idx by remember(level) { mutableIntStateOf(0) }
     var result by remember(level) { mutableStateOf<com.wc.cwtrainer.core.ExamResult?>(null) }
     var startedAt by remember(level) { mutableStateOf(0L) }
+    var remainingSec by remember(level) { mutableIntStateOf(level.durationMin * 60) }
+    var submitted by remember(level) { mutableStateOf(false) }
+    var autoSubmitted by remember(level) { mutableStateOf(false) }
+
+    // 交卷（手动或超时自动）：判分、存档、错题入库
+    val finishExam: (Boolean) -> Unit = { auto ->
+        if (!submitted) {
+            submitted = true
+            autoSubmitted = auto
+            val r = app.exam.gradeExam(
+                level, questions, answers,
+                System.currentTimeMillis() - startedAt
+            )
+            result = r
+            app.exam.saveBestIfBetter(r)
+            app.exam.addRecord(r)
+            questions.forEach { qq ->
+                val ua = answers[qq.id]
+                app.exam.recordAnswer(level, qq.id, ua != null && ua == qq.ans.toSet())
+            }
+            stage = "result"
+        }
+    }
+
+    // 倒计时
+    LaunchedEffect(stage, startedAt) {
+        if (stage != "session") return@LaunchedEffect
+        val endAt = startedAt + level.durationMin * 60_000L
+        while (true) {
+            val left = ((endAt - System.currentTimeMillis()) / 1000L).toInt()
+            remainingSec = left.coerceAtLeast(0)
+            if (left <= 0) break
+            delay(200)
+        }
+    }
+    LaunchedEffect(remainingSec, stage) {
+        if (stage == "session" && remainingSec <= 0) finishExam(true)
+    }
 
     when (stage) {
         "intro" -> {
@@ -817,8 +860,10 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                         }
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "${level.cn}考试：随机抽取 ${level.examCount} 道题，答对 ${level.passCount} 题或以上即通过。\n" +
-                                "题目从官方题库全部 ${QuestionBank.questionsFor(level).size} 题中抽取，含单选题和多选题（多选题需全部选对才得分）。",
+                            "${level.cn}考试：共 ${level.examCount} 题（单选 ${level.singleCount} 题、多选 ${level.multiCount} 题），" +
+                                "限时 ${level.durationMin} 分钟，答对 ${level.passCount} 题及以上合格。\n" +
+                                "多选题须与标准答案完全一致才得分，多选或少选均不得分；超出限时自动交卷。\n" +
+                                "题目从官方题库全部 ${QuestionBank.questionsFor(level).size} 题中随机抽取。",
                             color = PaperInk, fontSize = 13.5.sp, lineHeight = 23.sp, fontFamily = ExamFont
                         )
                         best?.let {
@@ -837,8 +882,14 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                     answers = emptyMap()
                     idx = 0
                     startedAt = System.currentTimeMillis()
+                    remainingSec = level.durationMin * 60
+                    submitted = false
+                    autoSubmitted = false
+                    result = null
                     stage = "session"
                 }
+                Spacer(Modifier.height(16.dp))
+                ExamHistory(app.exam.history(level), level)
                 Spacer(Modifier.height(12.dp))
             }
         }
@@ -851,9 +902,16 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
 
             Column(Modifier.fillMaxSize()) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                    Text("第 ${idx + 1} / ${questions.size} 题 · 已答 ${answers.size}" +
-                        if (q.isMulti) " · 多选题" else "",
-                        color = PaperDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("第 ${idx + 1} / ${questions.size} 题 · 已答 ${answers.size}" +
+                            if (q.isMulti) " · 多选题" else "",
+                            color = PaperDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.weight(1f))
+                        Text("剩余 ${fmtClock(remainingSec)}",
+                            color = if (remainingSec <= 300) PaperRed else PaperDim,
+                            fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace)
+                    }
                     Spacer(Modifier.height(4.dp))
                     Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
                         .background(PaperRule)) {
@@ -929,16 +987,7 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                         PaperButton("下一题", enabled = true, modifier = Modifier.weight(1f)) { idx++ }
                     } else {
                         PaperButton("交卷", primary = true, modifier = Modifier.weight(1f)) {
-                            val r = app.exam.gradeExam(
-                                level, questions, answers,
-                                System.currentTimeMillis() - startedAt)
-                            result = r
-                            app.exam.saveBestIfBetter(r)
-                            questions.forEach { qq ->
-                                val ua = answers[qq.id]
-                                app.exam.recordAnswer(level, qq.id, ua != null && ua == qq.ans.toSet())
-                            }
-                            stage = "result"
+                            finishExam(false)
                         }
                     }
                 }
@@ -1056,6 +1105,11 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                             Text("正确率 ${(r.rate * 100).toInt()}% · 用时 ${r.timeMs / 60000}分${(r.timeMs / 1000) % 60}秒",
                                 color = PaperDim, fontSize = 13.sp, fontFamily = ExamFont,
                                 modifier = Modifier.padding(top = 4.dp))
+                            if (autoSubmitted) {
+                                Text("考试时间已到，系统已自动交卷",
+                                    color = PaperRed, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                    fontFamily = ExamFont, modifier = Modifier.padding(top = 6.dp))
+                            }
                             Spacer(Modifier.height(10.dp))
                             MorseStrip("10111000101",
                                 Modifier.fillMaxWidth(0.4f).height(5.dp),
@@ -1068,6 +1122,60 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                     Spacer(Modifier.height(8.dp))
                     PaperButton("再考一次") { stage = "intro" }
                     Spacer(Modifier.height(20.dp))
+                }
+            }
+        }
+    }
+}
+
+/** 剩余时间 mm:ss */
+private fun fmtClock(sec: Int): String =
+    "%02d:%02d".format(sec / 60, sec % 60)
+
+/** 成绩记录：最多 10 条，最新的在最上面 */
+@Composable
+private fun ExamHistory(list: List<ExamRecord>, level: ExamLevel) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("成绩记录", color = PaperInk, fontSize = 15.sp,
+                fontWeight = FontWeight.Bold, fontFamily = ExamFont)
+            Spacer(Modifier.weight(1f))
+            Text("${list.size} / ${com.wc.cwtrainer.core.ExamManager.MAX_RECORDS} 条",
+                color = PaperDim, fontSize = 11.5.sp, fontFamily = FontFamily.Monospace)
+        }
+        Spacer(Modifier.height(8.dp))
+        if (list.isEmpty()) {
+            Box(Modifier.fillMaxWidth().clip(PaperShape).background(PaperCard)
+                .border(1.dp, PaperLine, PaperShape).padding(14.dp)) {
+                Text("暂无记录，完成一次${level.cn}模拟考试后在这里查看",
+                    color = PaperDim, fontSize = 13.sp, fontFamily = ExamFont)
+            }
+        } else {
+            list.forEach { rec ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                        .clip(PaperShape).background(PaperCard)
+                        .border(1.dp, PaperLine, PaperShape)
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(remember(rec.at) {
+                            SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.getDefault()).format(Date(rec.at))
+                        }, color = PaperInk, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                        Spacer(Modifier.height(3.dp))
+                        Text("用时 ${rec.timeMs / 60000}分${(rec.timeMs / 1000) % 60}秒",
+                            color = PaperDim, fontSize = 11.5.sp, fontFamily = ExamFont)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("得分 ${rec.correct}/${rec.total}",
+                            color = PaperInk, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace)
+                        Spacer(Modifier.height(3.dp))
+                        Text(if (rec.passed) "合格" else "不合格",
+                            color = if (rec.passed) PaperGreen else PaperRed,
+                            fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = ExamFont)
+                    }
                 }
             }
         }

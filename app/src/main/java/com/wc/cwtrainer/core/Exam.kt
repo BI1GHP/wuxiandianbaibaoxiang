@@ -2,12 +2,21 @@ package com.wc.cwtrainer.core
 
 /** 业余无线电操作证考试级别（2025 年官方题库）
  *
- * B 类考试：随机抽 50 题，答对 40 题通过
- * C 类考试：随机抽 80 题，答对 60 题通过
+ * B 类考试：60 题（单选 45 + 多选 15），限时 60 分钟，答对 45 题合格
+ * C 类考试：90 题（单选 70 + 多选 20），限时 90 分钟，答对 70 题合格
  */
-enum class ExamLevel(val cn: String, val examCount: Int, val passCount: Int) {
-    B("B类", 50, 40),
-    C("C类", 80, 60)
+enum class ExamLevel(
+    val cn: String,
+    val singleCount: Int,
+    val multiCount: Int,
+    val durationMin: Int,
+    val passCount: Int
+) {
+    B("B类", 45, 15, 60, 45),
+    C("C类", 70, 20, 90, 70);
+
+    /** 总题量 */
+    val examCount: Int get() = singleCount + multiCount
 }
 
 /** 一道题（来自官方题库 JSON） */
@@ -47,3 +56,12 @@ data class ExamResult(
 ) {
     val rate get() = if (total == 0) 0f else correct.toFloat() / total
 }
+
+/** 一次模拟考试的存档记录（最多保留 10 条） */
+data class ExamRecord(
+    val at: Long,          // 交卷时间戳
+    val correct: Int,      // 答对题数
+    val total: Int,        // 总题数
+    val passed: Boolean,
+    val timeMs: Long       // 用时
+)
