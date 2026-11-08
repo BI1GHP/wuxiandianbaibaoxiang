@@ -346,7 +346,8 @@ object UpdateManager {
                         _flow.value = if (pct >= 0) {
                             _flow.value.copy(
                                 progress = pct / 100f,
-                                message = "⏳ 下载中 $pct%（%.1f/%.1f MB）"
+                                // 注意 %% 是转义：字符串里有 format 占位符时，字面百分号必须写成 %%
+                                message = "⏳ 下载中 $pct%%（%.1f/%.1f MB）"
                                     .format(read / 1048576.0, total / 1048576.0)
                             )
                         } else {
