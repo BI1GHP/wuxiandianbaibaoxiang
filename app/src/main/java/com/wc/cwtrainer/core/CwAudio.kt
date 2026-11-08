@@ -335,10 +335,10 @@ class NoiseAudio(context: Context) {
                                 wander = (wander + (rnd.nextFloat() - 0.5f) * 0.16f)
                                     .coerceIn(0.45f, 1.25f)
                             }
-                            // 天电爆音：平均十几秒一次
-                            if (rnd.nextFloat() < 0.0000015f) crash = 0.3f + rnd.nextFloat() * 0.5f
+                            // 天电爆音：平均十几秒一次；小幅度低增益，是轻"噼啪"而非刺耳"咔咔"
+                            if (rnd.nextFloat() < 0.0000015f) crash = 0.15f + rnd.nextFloat() * 0.3f
                             crash *= 0.9994f
-                            val s = (lp2 * 2.4f * wander * qsb + lp2 * crash * 6f) * lv * 2.6f * env
+                            val s = (lp2 * 2.4f * wander * qsb + lp2 * crash * 2.5f) * lv * 2.6f * env
                             chunk[i] = (s.coerceIn(-0.9f, 0.9f) * 32767f).toInt().toShort()
                             // 150ms 起落，避免底噪突然出现/消失
                             env += (target - env) * 0.00025f

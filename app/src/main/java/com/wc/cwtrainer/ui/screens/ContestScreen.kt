@@ -246,7 +246,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
     DisposableEffect(Unit) {
         // 底噪是独立通道：进入赛事页就开始实时播放，与是否在发报/播报无关
-        app.noise.start(app.prefs.data.volume, 0.2f)
+        app.noise.start(app.prefs.data.volume, 0.12f)
         onDispose {
             app.sidetone.stop()
             app.audio.stop()

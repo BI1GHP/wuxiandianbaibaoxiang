@@ -274,7 +274,8 @@ object UpdateManager {
         val apkUrl: String? = null,
         val source: String? = null,
         val apkSizeBytes: Long = 0L,
-        val body: String = ""          // Release 说明（更新内容），弹窗展示
+        val body: String = "",         // Release 说明（更新内容），弹窗展示
+        val progress: Float = -1f      // 下载进度 0..1；-1 表示无进度（总长未知或未在下载）
     )
 
     /**
@@ -334,29 +335,52 @@ object UpdateManager {
         val url = _flow.value.apkUrl ?: return
         val status = _flow.value.status
         if (status == "downloading" || status == "installing") return
-        _flow.value = _flow.value.copy(status = "downloading", message = "⏳ 下载中…")
+        _flow.value = _flow.value.copy(status = "downloading", message = "⏳ 下载中…", progress = 0f)
         workScope.launch {
             try {
-                val file = downloadApk(context, url)
-                _flow.value = _flow.value.copy(status = "installing", message = "📦 正在安装…")
+                var lastPct = -1
+                val file = downloadApk(context, url) { read, total ->
+                    val pct = if (total > 0) (read * 100 / total).toInt() else -1
+                    if (pct != lastPct) {
+                        lastPct = pct
+                        _flow.value = if (pct >= 0) {
+                            _flow.value.copy(
+                                progress = pct / 100f,
+                                message = "⏳ 下载中 $pct%（%.1f/%.1f MB）"
+                                    .format(read / 1048576.0, total / 1048576.0)
+                            )
+                        } else {
+                            // 服务器没给总长：退化为只显示已下载量，进度条走不定态
+                            _flow.value.copy(
+                                progress = -1f,
+                                message = "⏳ 下载中 %.1f MB…".format(read / 1048576.0)
+                            )
+                        }
+                    }
+                }
+                _flow.value = _flow.value.copy(status = "installing", message = "📦 正在安装…", progress = 1f)
                 if (canInstallUnknownApp(context)) {
                     installApk(context, file)
                     // 回到可点击态，避免安装器返回后按钮一直停在 installing
-                    _flow.value = _flow.value.copy(status = "idle", message = "📦 已启动安装器")
+                    _flow.value = _flow.value.copy(status = "idle", message = "📦 已启动安装器", progress = -1f)
                 } else {
                     requestInstallPermission(context)
-                    _flow.value = _flow.value.copy(status = "need_perm", message = "⚠ 请允许安装未知应用，然后重新点击")
+                    _flow.value = _flow.value.copy(status = "need_perm", message = "⚠ 请允许安装未知应用，然后重新点击", progress = -1f)
                 }
             } catch (e: Exception) {
                 // 带异常类型便于定位：ConnectException / SocketTimeoutException / SSLException 等
-                _flow.value = _flow.value.copy(status = "error", message = "❌ 下载失败：${e.javaClass.simpleName}: ${e.message}")
+                _flow.value = _flow.value.copy(status = "error", message = "❌ 下载失败：${e.javaClass.simpleName}: ${e.message}", progress = -1f)
             }
         }
     }
 
     // ================== 下载 + 安装 ==================
 
-    suspend fun downloadApk(context: Context, apkUrl: String): File = withContext(Dispatchers.IO) {
+    suspend fun downloadApk(
+        context: Context,
+        apkUrl: String,
+        onProgress: (readBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): File = withContext(Dispatchers.IO) {
         // 手动跟随重定向（Gitee 会 302 两次到 foruda CDN，部分机型自动跟随不可靠）
         var url = apkUrl
         var conn: HttpURLConnection
@@ -394,12 +418,18 @@ object UpdateManager {
         val apkFile = File(downloadsDir, "cw-update.apk")
         if (apkFile.exists()) apkFile.delete()
 
+        // 总长用于进度显示；服务器不给 Content-Length 时为 -1，上层退化为不定态进度
+        val totalBytes = conn.contentLengthLong
+        var readBytes = 0L
+        onProgress(0L, totalBytes)
         conn.inputStream.use { input ->
             FileOutputStream(apkFile).use { output ->
                 val buffer = ByteArray(16384)
                 var read: Int
                 while (input.read(buffer).also { read = it } != -1) {
                     output.write(buffer, 0, read)
+                    readBytes += read
+                    onProgress(readBytes, totalBytes)
                 }
                 output.flush()
             }

@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -58,6 +60,7 @@ import com.wc.cwtrainer.ui.screens.HomeScreen
 import com.wc.cwtrainer.ui.screens.LearnScreen
 import com.wc.cwtrainer.ui.screens.SettingsScreen
 import com.wc.cwtrainer.ui.screens.TranslatorScreen
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -107,9 +110,12 @@ class MainActivity : ComponentActivity() {
                 val changeLog = remember(updateFlow.body) {
                     UpdateManager.displayNotes(updateFlow.body)
                 }
-                if (updateFlow.status == "new" && newVersion != null &&
-                    newVersion != promptedVersion && !showSplash
-                ) {
+                // 弹窗在下载/安装/出错期间保持打开，便于展示进度与重试
+                val uStatus = updateFlow.status
+                val showUpdateDialog = newVersion != null && newVersion != promptedVersion && !showSplash &&
+                    (uStatus == "new" || uStatus == "downloading" || uStatus == "installing" || uStatus == "error")
+                if (showUpdateDialog && newVersion != null) {
+                    val busy = uStatus == "downloading" || uStatus == "installing"
                     AlertDialog(
                         onDismissRequest = { promptedVersion = newVersion },
                         title = { Text("发现新版本 $newVersion") },
@@ -149,22 +155,72 @@ class MainActivity : ComponentActivity() {
                                         fontSize = 12.sp
                                     )
                                 }
-                                Spacer(Modifier.height(14.dp))
-                                Text(
-                                    text = "是否立即下载并安装？",
-                                    color = TextMain,
-                                    fontSize = 13.sp
-                                )
+                                when (uStatus) {
+                                    "downloading" -> {
+                                        Spacer(Modifier.height(14.dp))
+                                        if (updateFlow.progress >= 0f) {
+                                            LinearProgressIndicator(
+                                                progress = { updateFlow.progress },
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(
+                                                text = "下载中 ${(updateFlow.progress * 100).roundToInt()}%",
+                                                color = TextDim,
+                                                fontSize = 12.sp
+                                            )
+                                        } else {
+                                            // 服务器未给总长：不定态进度条
+                                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(text = "下载中…", color = TextDim, fontSize = 12.sp)
+                                        }
+                                    }
+                                    "installing" -> {
+                                        Spacer(Modifier.height(14.dp))
+                                        Text(
+                                            text = "📦 下载完成，正在调起安装器…",
+                                            color = TextMain,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                    "error" -> {
+                                        Spacer(Modifier.height(14.dp))
+                                        Text(
+                                            text = updateFlow.message,
+                                            color = MaterialTheme.colorScheme.error,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    else -> {
+                                        Spacer(Modifier.height(14.dp))
+                                        Text(
+                                            text = "是否立即下载并安装？",
+                                            color = TextMain,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                }
                             }
                         },
                         confirmButton = {
-                            TextButton(onClick = {
-                                promptedVersion = newVersion
-                                UpdateManager.downloadAndInstallAsync(context.applicationContext)
-                            }) { Text("下载更新") }
+                            TextButton(
+                                onClick = { UpdateManager.downloadAndInstallAsync(context.applicationContext) },
+                                enabled = !busy
+                            ) {
+                                Text(
+                                    when (uStatus) {
+                                        "downloading", "installing" -> "下载中…"
+                                        "error" -> "重试下载"
+                                        else -> "下载更新"
+                                    }
+                                )
+                            }
                         },
                         dismissButton = {
-                            TextButton(onClick = { promptedVersion = newVersion }) { Text("稍后") }
+                            TextButton(onClick = { promptedVersion = newVersion }) {
+                                Text(if (busy) "后台下载" else "稍后")
+                            }
                         }
                     )
                 }
