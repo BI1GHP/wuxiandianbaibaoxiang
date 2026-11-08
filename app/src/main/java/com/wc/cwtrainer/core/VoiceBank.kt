@@ -60,7 +60,7 @@ class VoiceBank(context: Context) {
     /**
      * 按单词顺序拼成一句话并播放。
      * @param voiceKey 音色键（en-US / en-US-f / de-DE-s ...），缺失的词逐级回退
-     * @param rate 语速倍率（0.9~1.1），通过重采样实现
+     * @param rate 语速倍率（0.82~1.22），用 WSOLA 时间伸缩实现：变速不变调
      */
     suspend fun play(
         words: List<String>,
@@ -93,15 +93,14 @@ class VoiceBank(context: Context) {
         for ((i, w) in words.withIndex()) {
             val raw = wordPcm(w, voiceKey) ?: return null
 
-            // 语调轮廓：句首略高、句尾略低（自然人声的降调），重报呼号稍提一点再落下来；
-            // 用重采样实现，幅度只有 ±3%，听感是语气变化而不是变调。
+            // 语调轮廓：句首略快、句尾略慢，重报呼号稍提一点再落下来；
+            // 用 WSOLA 时间伸缩实现，只改节奏不改音高（变速不变调）
             val p = i.toFloat() / (n - 1).coerceAtLeast(1)
             var r = rate * (1.03f - 0.07f * p)
             if (secondCall in 1..reportIdx && i >= secondCall && i < reportIdx) r *= 1.02f
             if (i >= serialStart) r *= 0.98f
             r = r.coerceIn(0.82f, 1.22f)
-            val targetSr = (SR * r).roundToInt()
-            val seg = if (targetSr == SR) raw.copyOf() else RadioDsp.resample(raw, SR, targetSr)
+            val seg = RadioDsp.timeStretch(raw, SR, r)
 
             // 逐词音量随句尾轻微收敛，避免每个词都同样响的“机关枪”感
             val gain = (1.00f - 0.10f * p).coerceIn(0.85f, 1f)

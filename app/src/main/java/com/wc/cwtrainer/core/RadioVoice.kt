@@ -212,6 +212,59 @@ internal object RadioDsp {
         return out
     }
 
+    /**
+     * WSOLA 时间伸缩：只改语速、不改音高（变速不变调）。
+     * rate > 1 变快（输出更短），rate < 1 变慢（输出更长）。
+     * 30ms 帧、50% 重叠、±6ms 相似度搜索，对单词级语音足够自然。
+     */
+    fun timeStretch(pcm: ShortArray, sampleRate: Int, rate: Float): ShortArray {
+        if (pcm.isEmpty() || rate <= 0.05f) return pcm
+        if (abs(rate - 1f) < 0.005f) return pcm.copyOf()
+        val frame = (0.030 * sampleRate).toInt().coerceAtLeast(64)
+        val hop = frame / 2
+        val search = (0.006 * sampleRate).toInt().coerceAtLeast(8)
+        val outLen = (pcm.size / rate).toInt().coerceAtLeast(1)
+        val acc = FloatArray(outLen + frame)
+        val win = FloatArray(frame) { i ->
+            (0.5 - 0.5 * cos(2.0 * PI * i / frame)).toFloat()
+        }
+        val cur = FloatArray(frame)
+        var pos = 0.0
+        var outPos = 0
+        var first = true
+        while (outPos < outLen) {
+            var shift = 0
+            if (!first) {
+                // 在上一次的相邻位置附近找波形最相似的起点，保证拼接连续、不出现咔哒
+                var best = -Float.MAX_VALUE
+                val base = pos.toInt()
+                for (d in -search..search) {
+                    val s = base + d
+                    if (s < 0 || s + hop > pcm.size) continue
+                    var sum = 0f
+                    var i = 0
+                    while (i < hop) {
+                        sum += pcm[s + i] * cur[hop + i]
+                        i += 2
+                    }
+                    if (sum > best) { best = sum; shift = d }
+                }
+            }
+            val start = pos.toInt() + shift
+            for (i in 0 until frame) {
+                val k = start + i
+                cur[i] = if (k in pcm.indices) pcm[k] / 32768f else 0f
+            }
+            for (i in 0 until frame) acc[outPos + i] += cur[i] * win[i]
+            outPos += hop
+            pos += hop * rate
+            first = false
+        }
+        return ShortArray(outLen) {
+            (acc[it] * 32767f).roundToInt().coerceIn(-32768, 32767).toShort()
+        }
+    }
+
     /** 单边带话音频段 + 温和增益：只做轻度带限和峰值控制，不刻意做失真/过载 */
     fun shape(pcm: ShortArray, sampleRate: Int): ShortArray {
         if (pcm.isEmpty()) return pcm

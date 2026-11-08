@@ -11,12 +11,13 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -122,7 +123,6 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     var showScript by remember { mutableStateOf(false) }   // 默认关闭！真实比赛盲听
 
     var callIn by remember { mutableStateOf(TextFieldValue("")) }
-    var rstIn by remember { mutableStateOf(TextFieldValue("")) }
     var serialIn by remember { mutableStateOf(TextFieldValue("")) }
     var check by remember { mutableStateOf<ContestCheck?>(null) }
 
@@ -132,6 +132,8 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     var stdMode by remember { mutableStateOf(s.ssbStandard) }
     // 底噪电平：独立通道实时可调，松开滑块时落盘
     var noiseLv by remember { mutableStateOf(s.contestNoise) }
+    // 语速：拖动只改本地值，松手落盘，下一轮播报生效
+    var wpmLv by remember(mode) { mutableStateOf(s.contestWpm) }
     val script = remember(station, mode, stdMode) { ContestGen.script(station, mode, stdMode) }
     // SSB 模式额外给出明文版（非字母解释法），显示在报文内容之后
     val plainScript = remember(station, mode) {
@@ -169,7 +171,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     fun newStation() {
         stop()
         station = ContestGen.station()
-        callIn = TextFieldValue(""); rstIn = TextFieldValue(""); serialIn = TextFieldValue("")
+        callIn = TextFieldValue(""); serialIn = TextFieldValue("")
         check = null
     }
     fun play() {
@@ -255,7 +257,8 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     }
 
     fun checkIt() {
-        check = ContestGen.check(station, callIn.text, rstIn.text, serialIn.text)
+        // RST 固定 599，不参与判分输入
+        check = ContestGen.check(station, callIn.text, "599", serialIn.text)
         check?.let { app.stats.reportContest(it.score) }
     }
 
@@ -279,22 +282,22 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .background(Brush.verticalGradient(listOf(PanelBg, Color(0xFF0E1116))))
         ) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             MetalHeader(onBack = { onBack() }, title = "CW / SSB 赛事听抄", subtitle = "模拟电台面板")
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
 
             // 频率面板（只显示频率 + 模式，不显示对方呼号 —— 真实电台你不知道对方是谁）
             FrequencyPanel(
                 pulse = pulse, mode = mode,
                 tone = if (mode == ContestMode.SSB && stdMode) ContestGen.toneName(station) else null
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
 
             // 模式 + 状态：合并成一条紧凑灯条，为下方抄收区腾出纵向空间
             ModeStatusBar(mode = mode, playing = playing)
             Spacer(Modifier.height(8.dp))
 
-            // CW/SSB 切换 + 码速 / 解释法风格 + 底噪：SSB 下全部压在同一行
+            // CW/SSB 切换 + 码速 / 解释法风格；SSB 时右侧一列放底噪、语速两块滑块
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -319,34 +322,80 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                         stdMode = v
                         app.prefs.update { p -> p.copy(ssbStandard = v) }
                     })
-                    Spacer(Modifier.width(6.dp))
-                    // 底噪调节与上面的选项同行，拖动实时生效
-                    Text("底噪", color = LedDim, fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace)
-                    Slider(
-                        value = noiseLv,
-                        onValueChange = { v ->
-                            noiseLv = v
-                            app.noise.setLevel(v)
-                        },
-                        onValueChangeFinished = {
-                            app.prefs.update { p -> p.copy(contestNoise = noiseLv) }
-                        },
-                        valueRange = 0f..0.3f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
-                        colors = SliderDefaults.colors(
-                            thumbColor = LedAmber,
-                            activeTrackColor = LedAmber,
-                            inactiveTrackColor = PanelLine
-                        )
-                    )
-                    Text(
-                        "${(noiseLv / 0.3f * 100).roundToInt()}%",
-                        color = LedAmber, fontSize = 10.sp, fontFamily = FontFamily.Monospace
-                    )
+                    Spacer(Modifier.width(8.dp))
+                    // 底噪、语速上下排列：标签与数值同宽，两块滑块左右完全对齐；
+                    // 一个拖动中时另一个禁用，避免误触
+                    Column(modifier = Modifier.weight(1f)) {
+                        val noiseSrc = remember { MutableInteractionSource() }
+                        val noiseDragging by noiseSrc.collectIsDraggedAsState()
+                        val wpmSrc = remember { MutableInteractionSource() }
+                        val wpmDragging by wpmSrc.collectIsDraggedAsState()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("底噪", color = LedDim, fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace, modifier = Modifier.width(24.dp))
+                            Slider(
+                                value = noiseLv,
+                                onValueChange = { v ->
+                                    noiseLv = v
+                                    app.noise.setLevel(v)
+                                },
+                                onValueChangeFinished = {
+                                    app.prefs.update { p -> p.copy(contestNoise = noiseLv) }
+                                },
+                                valueRange = 0f..0.3f,
+                                enabled = !wpmDragging,
+                                interactionSource = noiseSrc,
+                                modifier = Modifier.weight(1f).height(22.dp),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = LedAmber,
+                                    activeTrackColor = LedAmber,
+                                    inactiveTrackColor = PanelLine,
+                                    disabledThumbColor = LedOff,
+                                    disabledActiveTrackColor = LedOff,
+                                    disabledInactiveTrackColor = PanelLine
+                                )
+                            )
+                            Text(
+                                "${(noiseLv / 0.3f * 100).roundToInt()}%",
+                                color = LedAmber, fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.width(28.dp), textAlign = TextAlign.End
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("语速", color = LedDim, fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace, modifier = Modifier.width(24.dp))
+                            Slider(
+                                value = wpmLv.toFloat(),
+                                onValueChange = { v -> wpmLv = v.roundToInt() },
+                                onValueChangeFinished = {
+                                    app.prefs.update { p -> p.copy(contestWpm = wpmLv) }
+                                },
+                                valueRange = 5f..40f,
+                                steps = 34,
+                                enabled = !noiseDragging,
+                                interactionSource = wpmSrc,
+                                modifier = Modifier.weight(1f).height(22.dp),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = LedCyan,
+                                    activeTrackColor = LedCyan,
+                                    inactiveTrackColor = PanelLine,
+                                    disabledThumbColor = LedOff,
+                                    disabledActiveTrackColor = LedOff,
+                                    disabledInactiveTrackColor = PanelLine
+                                )
+                            )
+                            Text(
+                                "$wpmLv",
+                                color = LedCyan, fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.width(28.dp), textAlign = TextAlign.End
+                            )
+                        }
+                    }
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
 
             // 频谱瀑布 + 信号条：融合在同一面板内
             SpectrumWaterfall(
@@ -355,18 +404,18 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             )
 
             // —— 抄收填写：呼号 / RST / 序号 三栏同行，位于报文之上 ——
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             CopyPanel(
-                callIn = callIn, rstIn = rstIn, serialIn = serialIn,
-                onCall = { callIn = it }, onRst = { rstIn = it }, onSerial = { serialIn = it }
+                callIn = callIn, serialIn = serialIn,
+                onCall = { callIn = it }, onSerial = { serialIn = it }
             )
 
             // —— 报文内容（默认关闭，真实比赛盲听）——
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             ScriptPanel(script = script, plain = plainScript, show = showScript, onToggle = { showScript = !showScript })
 
             if (check != null) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 ResultPanel(check!!, station)
             }
             Spacer(Modifier.height(16.dp))
@@ -385,34 +434,27 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
 @Composable
 private fun MetalHeader(onBack: () -> Unit, title: String, subtitle: String) {
+    // 与其他板块保持同样的宽度：左右各留 14dp、10dp 圆角、1dp 描边
     Box(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(Brush.horizontalGradient(listOf(PanelRaised, PanelBg, PanelRaised)))
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .border(1.dp, PanelLine, RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("‹ 返回", color = LedDim.copy(alpha = 0.7f), fontSize = 13.sp,
+            Text("‹ 返回", color = LedDim.copy(alpha = 0.8f), fontSize = 13.sp,
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onBack() }
-                    .padding(horizontal = 6.dp, vertical = 4.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(title, color = LedAmber, fontSize = 18.sp,
-                fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    .padding(horizontal = 4.dp, vertical = 4.dp))
             Spacer(Modifier.width(8.dp))
-            Text(subtitle, color = LedDim, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.weight(1f))
-            Screw(); Spacer(Modifier.width(10.dp)); Screw()
+            Text(title, color = LedAmber, fontSize = 15.sp,
+                fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
+                maxLines = 1, softWrap = false)
+            Spacer(Modifier.width(6.dp))
+            Text(subtitle, color = LedDim, fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false)
         }
     }
-}
-
-@Composable
-private fun Screw() {
-    Box(
-        Modifier.size(14.dp).clip(CircleShape)
-            .background(Brush.radialGradient(colors = listOf(Color(0xFF4A5464), Color(0xFF1C222C))))
-            .border(1.dp, Color(0xFF0A0D11), CircleShape),
-        contentAlignment = Alignment.Center
-    ) { Box(Modifier.size(9.dp).background(Color(0xFF0A0D11)).height(1.dp)) }
 }
 
 @Composable
@@ -604,11 +646,13 @@ private fun SpectrumWaterfall(
                 prevNoise[i] = prevNoise[i] * 0.30f + raw * 0.70f
                 var energy = (prevNoise[i] + burst).toDouble()
 
-                // 信号亮带：高斯包络，发码时亮起
+                // 信号亮带：高斯包络，峰值固定（只留极小抖动）。
+                // 之前峰值随机 0.55~1.0，强帧会顶到色标上限而"饱和变宽"，
+                // 看起来就是亮带宽度忽宽忽窄地跳。
                 if (simulateOn) {
                     val dist = kotlin.math.abs(i - baseBin)
                     val g = kotlin.math.exp(-dist * dist / 22.0)
-                    energy += (0.55 + Random.nextFloat() * 0.45) * g * intensityMul
+                    energy += (0.62 + Random.nextFloat() * 0.06) * g * intensityMul
                 }
                 newBins[i] = energy.coerceIn(0.0, 1.0).toFloat()
             }
@@ -701,23 +745,28 @@ private fun SpectrumWaterfall(
         ) {
             Text("S", color = LedDim, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.width(4.dp))
-            Row(
+            // 用 Canvas 按固定几何绘制 12 段：电平变化只换颜色，
+            // 不再经过布局测量，避免格数增减时整条（乃至面板）宽度抖动
+            Canvas(
                 modifier = Modifier.weight(1f).height(9.dp)
                     .clip(RoundedCornerShape(2.dp)).background(PanelBg)
-                    .border(1.dp, PanelLine, RoundedCornerShape(2.dp)),
-                verticalAlignment = Alignment.CenterVertically
+                    .border(1.dp, PanelLine, RoundedCornerShape(2.dp))
             ) {
+                val gap = 1f
+                val segW = ((size.width - 2f - gap * 11f) / 12f).coerceAtLeast(1f)
                 for (i in 0 until 12) {
-                    val segLevel = (i + 1) / 12f
-                    val isOn = level >= segLevel
+                    val isOn = level >= (i + 1) / 12f
                     val color = when {
                         isOn && i < 9 -> LedGreen
                         isOn && i < 11 -> LedAmber
                         isOn -> LedRed
-                        else -> LedDim
+                        else -> LedOff
                     }
-                    Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 0.5.dp)
-                        .background(if (isOn) color.copy(alpha = 0.9f) else LedOff.copy(alpha = 0.55f)))
+                    drawRect(
+                        color = if (isOn) color.copy(alpha = 0.9f) else LedOff.copy(alpha = 0.55f),
+                        topLeft = Offset(1f + i * (segW + gap), 1f),
+                        size = androidx.compose.ui.geometry.Size(segW, size.height - 2f)
+                    )
                 }
             }
             Spacer(Modifier.width(4.dp))
@@ -728,7 +777,8 @@ private fun SpectrumWaterfall(
                 },
                 color = LedGreen.copy(alpha = 0.95f), fontSize = 9.sp,
                 fontFamily = FontFamily.Monospace,
-                modifier = Modifier.width(24.dp), textAlign = TextAlign.End
+                modifier = Modifier.width(28.dp), textAlign = TextAlign.End,
+                maxLines = 1, softWrap = false
             )
         }
 
@@ -805,9 +855,8 @@ private fun ScriptPanel(script: String, plain: String?, show: Boolean, onToggle:
 
 @Composable
 private fun CopyPanel(
-    callIn: TextFieldValue, rstIn: TextFieldValue, serialIn: TextFieldValue,
-    onCall: (TextFieldValue) -> Unit, onRst: (TextFieldValue) -> Unit,
-    onSerial: (TextFieldValue) -> Unit
+    callIn: TextFieldValue, serialIn: TextFieldValue,
+    onCall: (TextFieldValue) -> Unit, onSerial: (TextFieldValue) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
@@ -834,8 +883,17 @@ private fun CopyPanel(
                 Text("RST", color = LedAmber.copy(alpha = 0.95f),
                     fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
-                MetalField(value = rstIn, onValueChange = onRst,
-                    placeholder = "599", fontSize = 16)
+                // RST 固定 599，只读展示，不用输入
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(PanelRecessed)
+                        .border(1.dp, PanelLine, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("599", color = LedDim, fontSize = 16.sp,
+                        fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
             }
             Column(Modifier.weight(1f)) {
                 Text("序号  NR", color = LedAmber.copy(alpha = 0.95f),

@@ -120,7 +120,8 @@ object ContestGen {
             pitch = 0.85f + rng.nextFloat() * 0.35f,
             habit = habits[rng.nextInt(habits.size)],
             filler = fillers[rng.nextInt(fillers.size)],
-            report = if (rng.nextInt(3) == 0) "5NN" else "599",
+            // RST 固定 599：不再出 5NN 变种，抄收时无需输入 RST
+            report = "599",
             serial = Generators.serial(rng),
             tone = rng.nextInt(3),
             cwFist = Fist(
