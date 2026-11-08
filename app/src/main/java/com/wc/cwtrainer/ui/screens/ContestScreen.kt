@@ -27,6 +27,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -57,6 +59,7 @@ import com.wc.cwtrainer.core.ContestMode
 import com.wc.cwtrainer.core.VoiceSpec
 import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 // —— 短波面板专用色板 ——
@@ -121,7 +124,11 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
     // CW / SSB 模式（SSB 用系统 TTS 模仿各国口音播报）
     var mode by remember { mutableStateOf(s.contestMode) }
-    val script = remember(station, mode) { ContestGen.script(station, mode) }
+    // SSB 解释法风格：口语（各国习惯解释法）/ 标准（规范 NATO，仅语气差异）
+    var stdMode by remember { mutableStateOf(s.ssbStandard) }
+    // 底噪电平：独立通道实时可调，松开滑块时落盘
+    var noiseLv by remember { mutableStateOf(s.contestNoise) }
+    val script = remember(station, mode, stdMode) { ContestGen.script(station, mode, stdMode) }
     // SSB 模式额外给出明文版（非字母解释法），显示在报文内容之后
     val plainScript = remember(station, mode) {
         if (mode == ContestMode.SSB) ContestGen.ssbPlain(station) else null
@@ -172,7 +179,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     }
 
     // —— 自动循环播放：一遍播完静默 5 秒后自动重播，直至点"停止"或换台/离开 ——
-    LaunchedEffect(loopSession, mode) {
+    LaunchedEffect(loopSession, mode, stdMode) {
         if (loopSession == 0) return@LaunchedEffect
         // 模式切换会重启本协程，先掐掉上一种模式的残留声音（底噪是独立通道，不动）
         app.audio.stop()
@@ -198,10 +205,14 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                 // SSB：内置真人语音库（各国母语音色，天然口音），不加底噪
                 // 台站自身的 rate 是随机的（0.85~1.2），这里只做大范围收口，
                 // 保留每台之间的语速差异，避免每个台听起来一个速度
-                val rate = ((0.78f + now.contestWpm / 140f) * station.rate)
+                val baseRate = ((0.78f + now.contestWpm / 140f) * station.rate)
                     .coerceIn(0.88f, 1.12f)
+                // 标准模式：用词一律规范 NATO 解释法，语气（语速/停顿）按台站分平稳/急促/拖长三档
+                val rate = if (stdMode) (baseRate * ContestGen.toneRateMul(station))
+                    .coerceIn(0.85f, 1.18f) else baseRate
+                val pauseMul = if (stdMode) ContestGen.tonePauseMul(station) else 1f
                 val bank = app.voiceBank.play(
-                    ContestGen.ssbWords(station), station.voiceKey, rate, now.volume
+                    ContestGen.ssbWords(station, stdMode), station.voiceKey, rate, now.volume, pauseMul
                 )
                 if (bank.isFailure) {
                     // 词库缺词：退回系统 TTS 合成（可带各国口音）
@@ -246,7 +257,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
     DisposableEffect(Unit) {
         // 底噪是独立通道：进入赛事页就开始实时播放，与是否在发报/播报无关
-        app.noise.start(app.prefs.data.volume, 0.12f)
+        app.noise.start(app.prefs.data.volume, app.prefs.data.contestNoise)
         onDispose {
             app.sidetone.stop()
             app.audio.stop()
@@ -300,6 +311,54 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                         wpm = s.contestWpm,
                         onWpm = { app.prefs.update { p -> p.copy(contestWpm = it) } },
                         label = "对方码速"
+                    )
+                } else {
+                    // SSB：口语（各国习惯解释法）/ 标准（规范 NATO）切换
+                    Spacer(Modifier.width(10.dp))
+                    StdToggle(std = stdMode, onStd = { v ->
+                        stdMode = v
+                        app.prefs.update { p -> p.copy(ssbStandard = v) }
+                    })
+                    if (stdMode) {
+                        // 标准模式下每台随机一种语气
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            ContestGen.toneName(station),
+                            color = LedDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+            // SSB：底噪调节独占一行（与 CW 行内"对方码速"同一调节区），拖动实时生效
+            if (mode == ContestMode.SSB) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("底噪", color = LedDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    Spacer(Modifier.width(8.dp))
+                    Slider(
+                        value = noiseLv,
+                        onValueChange = { v ->
+                            noiseLv = v
+                            app.noise.setLevel(v)
+                        },
+                        onValueChangeFinished = {
+                            app.prefs.update { p -> p.copy(contestNoise = noiseLv) }
+                        },
+                        valueRange = 0f..0.3f,
+                        modifier = Modifier.weight(1f),
+                        colors = SliderDefaults.colors(
+                            thumbColor = LedAmber,
+                            activeTrackColor = LedAmber,
+                            inactiveTrackColor = PanelLine
+                        )
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${(noiseLv / 0.3f * 100).roundToInt()}%",
+                        color = LedAmber, fontSize = 11.sp, fontFamily = FontFamily.Monospace
                     )
                 }
             }
@@ -460,6 +519,19 @@ private fun ModeSegment(text: String, on: Boolean, onClick: () -> Unit) {
             fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
             fontFamily = FontFamily.Monospace
         )
+    }
+}
+
+/** SSB 解释法风格切换：口语（各国习惯）/ 标准（规范 NATO） */
+@Composable
+private fun StdToggle(std: Boolean, onStd: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(PanelRecessed)
+            .border(1.dp, PanelLine, RoundedCornerShape(8.dp)).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        ModeSegment("口语", !std) { onStd(false) }
+        ModeSegment("标准", std) { onStd(true) }
     }
 }
 

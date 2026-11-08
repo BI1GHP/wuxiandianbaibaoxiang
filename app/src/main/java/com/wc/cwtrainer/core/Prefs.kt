@@ -25,7 +25,10 @@ data class SettingsData(
     val learnWpm: Int = 20,
     val contestWpm: Int = 25,
     val contestMode: ContestMode = ContestMode.CW,
-    val translatorWpm: Int = 20
+    val translatorWpm: Int = 20,
+    // 赛事听抄：独立底噪通道电平、SSB 标准解释法（NATO）开关
+    val contestNoise: Float = 0.12f,
+    val ssbStandard: Boolean = false
 )
 
 /** 轻量设置存储，Compose 状态可直接读取 */
@@ -55,7 +58,9 @@ class AppPrefs(context: Context) {
         contestWpm = sp.getInt("contestWpm", 25),
         contestMode = runCatching { ContestMode.valueOf(sp.getString("contestMode", "CW")!!) }
             .getOrDefault(ContestMode.CW),
-        translatorWpm = sp.getInt("translatorWpm", 20)
+        translatorWpm = sp.getInt("translatorWpm", 20),
+        contestNoise = sp.getFloat("contestNoise", 0.12f),
+        ssbStandard = sp.getBoolean("ssbStandard", false)
     )
 
     fun update(block: (SettingsData) -> SettingsData) {
@@ -78,6 +83,8 @@ class AppPrefs(context: Context) {
             .putInt("contestWpm", next.contestWpm)
             .putString("contestMode", next.contestMode.name)
             .putInt("translatorWpm", next.translatorWpm)
+            .putFloat("contestNoise", next.contestNoise)
+            .putBoolean("ssbStandard", next.ssbStandard)
             .apply()
     }
 }

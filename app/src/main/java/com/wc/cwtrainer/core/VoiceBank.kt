@@ -62,17 +62,23 @@ class VoiceBank(context: Context) {
      * @param voiceKey 音色键（en-US / en-US-f / de-DE-s ...），缺失的词逐级回退
      * @param rate 语速倍率（0.9~1.1），通过重采样实现
      */
-    suspend fun play(words: List<String>, voiceKey: String, rate: Float, volume: Float): Result<Unit> =
+    suspend fun play(
+        words: List<String>,
+        voiceKey: String,
+        rate: Float,
+        volume: Float,
+        pauseMul: Float = 1f
+    ): Result<Unit> =
         withContext(Dispatchers.Default) {
-            val key = "$voiceKey#${words.joinToString("|")}#${"%.2f".format(rate)}"
-            val pcm = if (key == cachedKey) cachedPcm else build(words, voiceKey, rate)
+            val key = "$voiceKey#${words.joinToString("|")}#${"%.2f".format(rate)}#${"%.2f".format(pauseMul)}"
+            val pcm = if (key == cachedKey) cachedPcm else build(words, voiceKey, rate, pauseMul)
                 ?.also { cachedKey = key; cachedPcm = it }
             if (pcm == null) return@withContext Result.failure(IllegalStateException("voice bank miss"))
             playPcm(pcm, volume)
             Result.success(Unit)
         }
 
-    private fun build(words: List<String>, voiceKey: String, rate: Float): ShortArray? {
+    private fun build(words: List<String>, voiceKey: String, rate: Float, pauseMul: Float = 1f): ShortArray? {
         if (words.isEmpty()) return null
         val n = words.size
         val reportIdx = words.indexOfFirst { it == "five nine" || it == "five nine nine" }
@@ -109,15 +115,17 @@ class VoiceBank(context: Context) {
             }
             parts.add(seg)
 
-            gaps[i] = when {
-                i == 0 -> 0
-                i == 1 -> 200                    // “This is” 后略停再报呼号
-                i == secondCall -> 300           // 呼号重报前喘口气
-                i == reportIdx -> 240            // 报信号报告前
-                i == serialStart -> 220          // 报序号前
-                i >= serialStart -> 115          // 序号逐位，读清楚
-                else -> 55 + ((i * 7) % 4) * 7   // 呼号字母 55~76ms，带轻微节奏变化
+            val gapMs = when {
+                i == 0 -> 0f
+                i == 1 -> 200f                   // “This is” 后略停再报呼号
+                i == secondCall -> 300f          // 呼号重报前喘口气
+                i == reportIdx -> 240f           // 报信号报告前
+                i == serialStart -> 220f         // 报序号前
+                i >= serialStart -> 115f         // 序号逐位，读清楚
+                else -> 55f + ((i * 7) % 4) * 7  // 呼号字母 55~76ms，带轻微节奏变化
             }
+            // 语气差异：急促整体压缩停顿，拖长整体拉宽停顿
+            gaps[i] = (gapMs * pauseMul).roundToInt()
         }
 
         val lead = ShortArray((0.04f * SR).toInt())

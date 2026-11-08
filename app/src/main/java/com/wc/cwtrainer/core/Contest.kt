@@ -19,6 +19,8 @@ data class ContestStation(
     val filler: String,
     val report: String,
     val serial: String,
+    // 标准解释法模式下的语气：0=平稳 1=急促 2=拖长（仅节奏/语速差异）
+    val tone: Int,
     val cwFist: Fist
 )
 
@@ -120,6 +122,7 @@ object ContestGen {
             filler = fillers[rng.nextInt(fillers.size)],
             report = if (rng.nextInt(3) == 0) "5NN" else "599",
             serial = Generators.serial(rng),
+            tone = rng.nextInt(3),
             cwFist = Fist(
                 wpm = 18.0 + rng.nextInt(15),
                 dashRatio = 2.7 + rng.nextDouble() * 0.8,
@@ -190,10 +193,17 @@ object ContestGen {
     fun serialSpoken(serial: String): String =
         serial.map { c -> if (c.isDigit()) digitWords[c - '0'] else c.toString() }.joinToString(" ")
 
-    fun script(st: ContestStation, mode: ContestMode, rng: Random = Random): String {
+    // —— SSB 标准解释法模式的语气：词不变（规范 NATO + 国家口音），只有节奏/语速差异 ——
+    fun toneName(st: ContestStation): String = when (st.tone) { 1 -> "急促"; 2 -> "拖长"; else -> "平稳" }
+    fun toneRateMul(st: ContestStation): Float = when (st.tone) { 1 -> 1.08f; 2 -> 0.92f; else -> 1f }
+    fun tonePauseMul(st: ContestStation): Float = when (st.tone) { 1 -> 0.6f; 2 -> 1.35f; else -> 1f }
+
+    fun script(st: ContestStation, mode: ContestMode, standard: Boolean = false, rng: Random = Random): String {
         return if (mode == ContestMode.SSB) {
             // SSB 只报三要素：呼号（字母解释法）、信号报告、序号，不加 CQ / 客套话
-            val callWords = spellCall(st.call, st.style, rng)
+            // standard=true 时不论台站口语习惯，一律用规范 NATO 解释法（口音由音色保留）
+            val style = if (standard) PhoneticStyle.NATO else st.style
+            val callWords = spellCall(st.call, style, rng)
             val reportWords = if (st.report == "5NN") "five nine nine" else "five nine"
             "This is $callWords, $callWords. $reportWords, ${serialSpoken(st.serial)}."
         } else {
@@ -216,8 +226,9 @@ object ContestGen {
      * SSB 报文的单词序列（供内置真人语音库逐词播放）：
      * This is + 呼号（两遍，字母解释法）+ 信号报告 + 序号，只有这三要素。
      */
-    fun ssbWords(st: ContestStation, rng: Random = Random): List<String> {
-        val callWords = spellCall(st.call, st.style, rng).split(" ").filter { it.isNotBlank() }
+    fun ssbWords(st: ContestStation, standard: Boolean = false, rng: Random = Random): List<String> {
+        val style = if (standard) PhoneticStyle.NATO else st.style
+        val callWords = spellCall(st.call, style, rng).split(" ").filter { it.isNotBlank() }
         val report = if (st.report == "5NN") listOf("five nine nine") else listOf("five nine")
         val serial = st.serial.mapNotNull { c ->
             if (c.isDigit()) digitWords[c - '0'] else null

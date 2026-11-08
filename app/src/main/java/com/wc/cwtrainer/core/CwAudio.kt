@@ -254,14 +254,18 @@ class NoiseAudio(context: Context) {
     @Volatile
     private var session = 0
 
+    // 电平实时可调：生成循环每块读取，滑块拖动即刻生效
+    @Volatile
+    private var levelNow = 0.12f
+
     var isPlaying by mutableStateOf(false)
         private set
 
     fun start(volume: Float = 1f, level: Float = 0.08f) {
         stop()
         val vol = volume.coerceIn(0f, 1f)
-        val lv = level.coerceIn(0f, 1f)
-        if (lv <= 0f) return
+        // 即使以 0 电平启动也保持通道运行：用户随时可用滑块把底噪拉起来
+        levelNow = level.coerceIn(0f, 1f)
         val mySession = ++session
         running = true
         isPlaying = true
@@ -338,7 +342,7 @@ class NoiseAudio(context: Context) {
                             // 天电爆音：平均十几秒一次；小幅度低增益，是轻"噼啪"而非刺耳"咔咔"
                             if (rnd.nextFloat() < 0.0000015f) crash = 0.15f + rnd.nextFloat() * 0.3f
                             crash *= 0.9994f
-                            val s = (lp2 * 2.4f * wander * qsb + lp2 * crash * 2.5f) * lv * 2.6f * env
+                            val s = (lp2 * 2.4f * wander * qsb + lp2 * crash * 2.5f) * levelNow * 2.6f * env
                             chunk[i] = (s.coerceIn(-0.9f, 0.9f) * 32767f).toInt().toShort()
                             // 150ms 起落，避免底噪突然出现/消失
                             env += (target - env) * 0.00025f
@@ -365,6 +369,11 @@ class NoiseAudio(context: Context) {
             }
             if (session == mySession) isPlaying = false
         }
+    }
+
+    /** 实时调整底噪电平：不重启通道、不中断声音，下一块样本生效 */
+    fun setLevel(level: Float) {
+        levelNow = level.coerceIn(0f, 1f)
     }
 
     fun stop() {
