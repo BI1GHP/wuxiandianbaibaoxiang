@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -280,7 +281,10 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             Spacer(Modifier.height(10.dp))
 
             // 频率面板（只显示频率 + 模式，不显示对方呼号 —— 真实电台你不知道对方是谁）
-            FrequencyPanel(pulse, mode)
+            FrequencyPanel(
+                pulse = pulse, mode = mode,
+                tone = if (mode == ContestMode.SSB && stdMode) ContestGen.toneName(station) else null
+            )
             Spacer(Modifier.height(10.dp))
 
             // 模式灯 + 状态灯：独立一行，左右平铺
@@ -293,10 +297,9 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
 
-            // CW/SSB 切换 + 对方码速：同一行，居中；SSB 模式语速由台站随机决定，不显示调节
+            // CW/SSB 切换 + 码速 / 解释法风格 + 底噪：SSB 下全部压在同一行
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 ModeToggle(mode = mode, onMode = { m ->
@@ -314,30 +317,15 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                     )
                 } else {
                     // SSB：口语（各国习惯解释法）/ 标准（规范 NATO）切换
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(8.dp))
                     StdToggle(std = stdMode, onStd = { v ->
                         stdMode = v
                         app.prefs.update { p -> p.copy(ssbStandard = v) }
                     })
-                    if (stdMode) {
-                        // 标准模式下每台随机一种语气
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            ContestGen.toneName(station),
-                            color = LedDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-            }
-            // SSB：底噪调节独占一行（与 CW 行内"对方码速"同一调节区），拖动实时生效
-            if (mode == ContestMode.SSB) {
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("底噪", color = LedDim, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
+                    // 底噪调节与上面的选项同行，拖动实时生效
+                    Text("底噪", color = LedDim, fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace)
                     Slider(
                         value = noiseLv,
                         onValueChange = { v ->
@@ -348,37 +336,37 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                             app.prefs.update { p -> p.copy(contestNoise = noiseLv) }
                         },
                         valueRange = 0f..0.3f,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
                         colors = SliderDefaults.colors(
                             thumbColor = LedAmber,
                             activeTrackColor = LedAmber,
                             inactiveTrackColor = PanelLine
                         )
                     )
-                    Spacer(Modifier.width(8.dp))
                     Text(
                         "${(noiseLv / 0.3f * 100).roundToInt()}%",
-                        color = LedAmber, fontSize = 11.sp, fontFamily = FontFamily.Monospace
+                        color = LedAmber, fontSize = 10.sp, fontFamily = FontFamily.Monospace
                     )
                 }
             }
             Spacer(Modifier.height(10.dp))
 
-            // 频谱瀑布：独占一行，全宽平铺填满
-            SpectrumWaterfall(playing = playing, keying = keying, pulse = pulse)
+            // 频谱瀑布 + 信号条：融合在同一面板内
+            SpectrumWaterfall(
+                playing = playing, keying = keying, pulse = pulse,
+                level = if (playing) smeter else 0f
+            )
 
-            Spacer(Modifier.height(10.dp))
-            SMeterPanel(level = if (playing) smeter else 0f)
-
-            // —— 报文内容（默认关闭，真实比赛盲听）——
-            Spacer(Modifier.height(10.dp))
-            ScriptPanel(script = script, plain = plainScript, show = showScript, onToggle = { showScript = !showScript })
-
+            // —— 抄收填写：呼号 / RST / 序号 三栏同行，位于报文之上 ——
             Spacer(Modifier.height(10.dp))
             CopyPanel(
                 callIn = callIn, rstIn = rstIn, serialIn = serialIn,
                 onCall = { callIn = it }, onRst = { rstIn = it }, onSerial = { serialIn = it }
             )
+
+            // —— 报文内容（默认关闭，真实比赛盲听）——
+            Spacer(Modifier.height(10.dp))
+            ScriptPanel(script = script, plain = plainScript, show = showScript, onToggle = { showScript = !showScript })
 
             if (check != null) {
                 Spacer(Modifier.height(10.dp))
@@ -431,7 +419,7 @@ private fun Screw() {
 }
 
 @Composable
-private fun FrequencyPanel(pulse: Float, mode: ContestMode) {
+private fun FrequencyPanel(pulse: Float, mode: ContestMode, tone: String? = null) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
             .clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
@@ -451,8 +439,15 @@ private fun FrequencyPanel(pulse: Float, mode: ContestMode) {
                     fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 1.dp))
             }
             Spacer(Modifier.weight(1f))
-            Text("●  -0 dBm", color = LedGreen.copy(alpha = 0.8f),
-                fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            Column(horizontalAlignment = Alignment.End) {
+                Text("●  -0 dBm", color = LedGreen.copy(alpha = 0.8f),
+                    fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                // 标准解释法模式下显示该台站的随机语气（平稳 / 急促 / 拖长）
+                if (tone != null) {
+                    Text("语气 $tone", color = LedDim, fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 2.dp))
+                }
+            }
         }
     }
 }
@@ -572,7 +567,9 @@ private fun StatusDot(label: String, color: Color, on: Boolean) {
  * - 每 50ms 刷新一次
  */
 @Composable
-private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
+private fun SpectrumWaterfall(
+    playing: Boolean, keying: Boolean, pulse: Float, level: Float
+) {
     // 缓存频谱能量分布（96 个 bin × 40 行历史）
     var waterfall by remember { mutableStateOf(List(WF_ROWS) { List(WF_BINS) { 0f } }) }
     // 预生成的连续热力色表，绘制时按能量查表
@@ -671,7 +668,7 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp)
-                .height(190.dp)
+                .height(126.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color(0xFF05080C))
         ) {
@@ -720,6 +717,45 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             }
         }
 
+        // —— 信号强度条：与频谱融合在同一面板，不再单独占用一个面板 ——
+        Row(
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = 8.dp).padding(top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("S", color = LedDim, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+            Spacer(Modifier.width(4.dp))
+            Row(
+                modifier = Modifier.weight(1f).height(9.dp)
+                    .clip(RoundedCornerShape(2.dp)).background(PanelBg)
+                    .border(1.dp, PanelLine, RoundedCornerShape(2.dp)),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (i in 0 until 12) {
+                    val segLevel = (i + 1) / 12f
+                    val isOn = level >= segLevel
+                    val color = when {
+                        isOn && i < 9 -> LedGreen
+                        isOn && i < 11 -> LedAmber
+                        isOn -> LedRed
+                        else -> LedDim
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 0.5.dp)
+                        .background(if (isOn) color.copy(alpha = 0.85f) else LedDim.copy(alpha = 0.25f)))
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = if (level <= 0.01f) "—" else {
+                    val labels = listOf("S1", "S3", "S5", "S7", "S9", "+20", "+40", "+60")
+                    labels[((level * 8).toInt()).coerceIn(0, 7)]
+                },
+                color = LedGreen.copy(alpha = 0.75f), fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.width(24.dp), textAlign = TextAlign.End
+            )
+        }
+
         // 频率刻度（下方）
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
@@ -728,54 +764,6 @@ private fun SpectrumWaterfall(playing: Boolean, keying: Boolean, pulse: Float) {
             for (label in listOf("7.000", "7.020", "7.040", "7.060", "7.080")) {
                 Text(label, color = LedDim.copy(alpha = 0.5f), fontSize = 8.sp,
                     fontFamily = FontFamily.Monospace)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SMeterPanel(level: Float) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
-            .clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
-            .border(1.dp, PanelLine, RoundedCornerShape(10.dp)).padding(12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("S METER", color = LedDim, fontSize = 9.sp,
-                fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
-            Spacer(Modifier.weight(1f))
-            Text("RF  SIGNAL", color = LedDim, fontSize = 9.sp,
-                fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
-        }
-        Spacer(Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth().height(20.dp)
-                .clip(RoundedCornerShape(4.dp)).background(PanelBg)
-                .border(1.dp, PanelLine, RoundedCornerShape(4.dp)),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            for (i in 0 until 12) {
-                val segLevel = (i + 1) / 12f
-                val isOn = level >= segLevel
-                val color = when {
-                    isOn && i < 9 -> LedGreen
-                    isOn && i < 11 -> LedAmber
-                    isOn -> LedRed
-                    else -> LedDim
-                }
-                Box(Modifier.weight(1f).fillMaxSize().padding(1.dp)
-                    .background(if (isOn) color.copy(alpha = 0.85f) else LedDim.copy(alpha = 0.3f)))
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
-        Row(modifier = Modifier.fillMaxWidth()) {
-            for (label in listOf("S1", "S3", "S5", "S7", "S9", "+20", "+40", "+60")) {
-                Text(label, color = LedDim, fontSize = 8.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.weight(1f),
-                    textAlign = TextAlign.Center)
             }
         }
     }
@@ -852,31 +840,33 @@ private fun CopyPanel(
     ) {
         Text("抄收填写 COPY LOG", color = LedDim, fontSize = 9.sp,
             fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
-        Column {
-            Text("呼号  CALLSIGN", color = LedAmber.copy(alpha = 0.7f),
-                fontSize = 9.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.height(4.dp))
-            MetalField(value = callIn, onValueChange = onCall,
-                placeholder = "对方呼号…", fontSize = 24)
-        }
-
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        // 呼号 / RST / 序号：同一行三栏，节省纵向空间
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Column(Modifier.weight(1.7f)) {
+                Text("呼号  CALL", color = LedAmber.copy(alpha = 0.7f),
+                    fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(4.dp))
+                MetalField(value = callIn, onValueChange = onCall,
+                    placeholder = "呼号…", fontSize = 18)
+            }
             Column(Modifier.weight(1f)) {
                 Text("RST", color = LedAmber.copy(alpha = 0.7f),
                     fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
                 MetalField(value = rstIn, onValueChange = onRst,
-                    placeholder = "599", fontSize = 18)
+                    placeholder = "599", fontSize = 16)
             }
             Column(Modifier.weight(1f)) {
-                Text("序号  SERIAL", color = LedAmber.copy(alpha = 0.7f),
+                Text("序号  NR", color = LedAmber.copy(alpha = 0.7f),
                     fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
                 MetalField(value = serialIn, onValueChange = onSerial,
-                    placeholder = "001", fontSize = 18)
+                    placeholder = "001", fontSize = 16)
             }
         }
     }
