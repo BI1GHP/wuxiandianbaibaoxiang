@@ -78,10 +78,12 @@ class MainActivity : ComponentActivity() {
                     showSplash = false
                 }
 
-                // 页面切换时统一停掉所有声音源，避免串扰
+                // 页面切换时统一停掉所有声音源，避免串扰。
+                // 注意：底噪（noise）不停——它由赛事页 DisposableEffect 全权管理。
+                // 本协程体在 Compose 应用阶段之后才执行，若在这里停 noise，
+                // 会把赛事页刚启动的底噪立刻掐掉（stop 在 start 之后跑）。
                 LaunchedEffect(screen) {
                     app.audio.stop()
-                    app.noise.stop()
                     app.voice.stop()
                     app.radio.stop()
                     app.voiceBank.stop()

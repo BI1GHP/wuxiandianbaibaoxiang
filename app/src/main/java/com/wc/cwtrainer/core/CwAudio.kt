@@ -267,87 +267,103 @@ class NoiseAudio(context: Context) {
         isPlaying = true
 
         job = scope.launch(Dispatchers.Default) {
-            var t: AudioTrack? = null
-            try {
-                val minBuf = AudioTrack.getMinBufferSize(
-                    CwRenderer.SR,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT
-                )
-                t = AudioTrack.Builder()
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build()
+            // 自愈外层循环：某些设备上其它音轨开始播放（尤其 SPEECH 类型）、
+            // 输出设备切换或系统回收时，本底噪轨的 write 会失败甚至整条被丢弃。
+            // 只要不是主动 stop，就以指数退避重建 AudioTrack，保证底噪常驻。
+            var backoff = 200L
+            var quit = false
+            while (!quit && running && session == mySession) {
+                var t: AudioTrack? = null
+                var fadedOut = false
+                try {
+                    val minBuf = AudioTrack.getMinBufferSize(
+                        CwRenderer.SR,
+                        AudioFormat.CHANNEL_OUT_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT
                     )
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setSampleRate(CwRenderer.SR)
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                            .build()
-                    )
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(max(minBuf, 8192))
-                    .build()
-                track = t
-                t.setVolume((vol * 0.9f).coerceIn(0f, 1f))
-                t.play()
+                    t = AudioTrack.Builder()
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build()
+                        )
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setSampleRate(CwRenderer.SR)
+                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                                .build()
+                        )
+                        .setTransferMode(AudioTrack.MODE_STREAM)
+                        .setBufferSizeInBytes(max(minBuf, 8192))
+                        .build()
+                    track = t
+                    t.setVolume((vol * 0.9f).coerceIn(0f, 1f))
+                    t.play()
+                    // 成功开播：下次若再失败，退避从头算起
+                    backoff = 200L
 
-                val rnd = Random(System.nanoTime())
-                val chunk = ShortArray(2048)
-                // 250Hz 高通 + 2800Hz 两级低通：只留话音频段，接近短波接收机的底噪
-                val hpA = 0.966f
-                val lpA = 0.285f
-                var hpX = 0f
-                var hpY = 0f
-                var lp1 = 0f
-                var lp2 = 0f
-                var crash = 0f
-                var wander = 0.55f + rnd.nextFloat() * 0.5f
-                var env = 0f
-                var n = 0L
-                var qsbPhase = rnd.nextDouble() * 6.28
-                while (true) {
-                    val alive = running && session == mySession
-                    val target = if (alive) 1f else 0f
-                    // 慢衰落（QSB）：约 10 秒一个周期，模拟传播条件起伏
-                    qsbPhase += 2.0 * PI * 0.09 * chunk.size / CwRenderer.SR
-                    val qsb = (0.72 + 0.28 * sin(qsbPhase)).toFloat()
-                    for (i in chunk.indices) {
-                        val white = rnd.nextFloat() * 2f - 1f
-                        val hpOut = hpA * (hpY + white - hpX)
-                        hpX = white
-                        hpY = hpOut
-                        lp1 += lpA * (hpOut - lp1)
-                        lp2 += lpA * (lp1 - lp2)
-                        if ((n + i) % (CwRenderer.SR / 8) == 0L) {
-                            wander = (wander + (rnd.nextFloat() - 0.5f) * 0.16f)
-                                .coerceIn(0.45f, 1.25f)
+                    val rnd = Random(System.nanoTime())
+                    val chunk = ShortArray(2048)
+                    // 250Hz 高通 + 2800Hz 两级低通：只留话音频段，接近短波接收机的底噪
+                    val hpA = 0.966f
+                    val lpA = 0.285f
+                    var hpX = 0f
+                    var hpY = 0f
+                    var lp1 = 0f
+                    var lp2 = 0f
+                    var crash = 0f
+                    var wander = 0.55f + rnd.nextFloat() * 0.5f
+                    var env = 0f
+                    var n = 0L
+                    var qsbPhase = rnd.nextDouble() * 6.28
+                    while (true) {
+                        val alive = running && session == mySession
+                        val target = if (alive) 1f else 0f
+                        // 慢衰落（QSB）：约 10 秒一个周期，模拟传播条件起伏
+                        qsbPhase += 2.0 * PI * 0.09 * chunk.size / CwRenderer.SR
+                        val qsb = (0.72 + 0.28 * sin(qsbPhase)).toFloat()
+                        for (i in chunk.indices) {
+                            val white = rnd.nextFloat() * 2f - 1f
+                            val hpOut = hpA * (hpY + white - hpX)
+                            hpX = white
+                            hpY = hpOut
+                            lp1 += lpA * (hpOut - lp1)
+                            lp2 += lpA * (lp1 - lp2)
+                            if ((n + i) % (CwRenderer.SR / 8) == 0L) {
+                                wander = (wander + (rnd.nextFloat() - 0.5f) * 0.16f)
+                                    .coerceIn(0.45f, 1.25f)
+                            }
+                            // 天电爆音：平均十几秒一次
+                            if (rnd.nextFloat() < 0.0000015f) crash = 0.3f + rnd.nextFloat() * 0.5f
+                            crash *= 0.9994f
+                            val s = (lp2 * 2.4f * wander * qsb + lp2 * crash * 6f) * lv * 2.6f * env
+                            chunk[i] = (s.coerceIn(-0.9f, 0.9f) * 32767f).toInt().toShort()
+                            // 150ms 起落，避免底噪突然出现/消失
+                            env += (target - env) * 0.00025f
                         }
-                        // 天电爆音：平均十几秒一次
-                        if (rnd.nextFloat() < 0.0000015f) crash = 0.3f + rnd.nextFloat() * 0.5f
-                        crash *= 0.9994f
-                        val s = (lp2 * 2.4f * wander * qsb + lp2 * crash * 6f) * lv * 2.6f * env
-                        chunk[i] = (s.coerceIn(-0.9f, 0.9f) * 32767f).toInt().toShort()
-                        // 150ms 起落，避免底噪突然出现/消失
-                        env += (target - env) * 0.00025f
+                        n += chunk.size
+                        t.write(chunk, 0, chunk.size, AudioTrack.WRITE_BLOCKING)
+                        if (!alive && env < 0.002f) { fadedOut = true; break }
                     }
-                    n += chunk.size
-                    t.write(chunk, 0, chunk.size, AudioTrack.WRITE_BLOCKING)
-                    if (!alive && env < 0.002f) break
+                } catch (e: Exception) {
+                    Log.e("NoiseAudio", "noise interrupted, will recover", e)
+                } finally {
+                    try { t?.pause(); t?.flush() } catch (_: Exception) {}
+                    try { t?.release() } catch (_: Exception) {}
+                    if (track === t) track = null
                 }
-            } catch (e: Exception) {
-                Log.e("NoiseAudio", "noise failed", e)
-            } finally {
-                try { t?.pause(); t?.flush() } catch (_: Exception) {}
-                try { t?.release() } catch (_: Exception) {}
-                if (track === t) {
-                    track = null
-                    isPlaying = false
+                if (fadedOut) {
+                    // 主动 stop 后的正常淡出，结束
+                    quit = true
+                } else if (running && session == mySession) {
+                    // 异常中断：退避后重建音轨
+                    delay(backoff)
+                    backoff = (backoff * 2).coerceAtMost(5000L)
                 }
             }
+            if (session == mySession) isPlaying = false
         }
     }
 

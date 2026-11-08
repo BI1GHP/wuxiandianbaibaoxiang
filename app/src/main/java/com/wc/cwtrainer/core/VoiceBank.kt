@@ -263,7 +263,9 @@ class VoiceBank(context: Context) {
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        // 与底噪轨/CW 轨保持同类型：若用 SPEECH，部分 ROM 会把
+                        // MUSIC 类型的底噪轨当作可闪避对象压低甚至掐掉
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
                 .setAudioFormat(

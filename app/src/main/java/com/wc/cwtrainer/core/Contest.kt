@@ -204,6 +204,15 @@ object ContestGen {
     }
 
     /**
+     * SSB 报文的明文版（非字母解释法）：呼号原样 + 数字报告与序号，
+     * 与 script()/ssbWords() 实际播报的内容一一对应，用于报文面板第二行显示。
+     */
+    fun ssbPlain(st: ContestStation): String {
+        val report = if (st.report == "5NN") "599" else "59"
+        return "${st.call}, ${st.call}. $report, ${st.serial}."
+    }
+
+    /**
      * SSB 报文的单词序列（供内置真人语音库逐词播放）：
      * This is + 呼号（两遍，字母解释法）+ 信号报告 + 序号，只有这三要素。
      */

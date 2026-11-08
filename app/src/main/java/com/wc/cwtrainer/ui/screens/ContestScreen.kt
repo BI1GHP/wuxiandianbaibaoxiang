@@ -122,6 +122,10 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     // CW / SSB 模式（SSB 用系统 TTS 模仿各国口音播报）
     var mode by remember { mutableStateOf(s.contestMode) }
     val script = remember(station, mode) { ContestGen.script(station, mode) }
+    // SSB 模式额外给出明文版（非字母解释法），显示在报文内容之后
+    val plainScript = remember(station, mode) {
+        if (mode == ContestMode.SSB) ContestGen.ssbPlain(station) else null
+    }
 
     // —— 侧音状态：监听 sidetone.gated 来驱动频谱瀑布的"发码亮带"效果 ——
     var keying by remember { mutableStateOf(false) }
@@ -242,7 +246,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
     DisposableEffect(Unit) {
         // 底噪是独立通道：进入赛事页就开始实时播放，与是否在发报/播报无关
-        app.noise.start(app.prefs.data.volume, 0.075f)
+        app.noise.start(app.prefs.data.volume, 0.2f)
         onDispose {
             app.sidetone.stop()
             app.audio.stop()
@@ -278,7 +282,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
 
-            // CW/SSB 切换 + 对方码速：同一行，居中，不改变既有布局
+            // CW/SSB 切换 + 对方码速：同一行，居中；SSB 模式语速由台站随机决定，不显示调节
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
                 horizontalArrangement = Arrangement.Center,
@@ -290,12 +294,14 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                         app.prefs.update { p -> p.copy(contestMode = m) }
                     }
                 })
-                Spacer(Modifier.width(10.dp))
-                WpmAdjuster(
-                    wpm = s.contestWpm,
-                    onWpm = { app.prefs.update { p -> p.copy(contestWpm = it) } },
-                    label = if (mode == ContestMode.CW) "对方码速" else "对方语速"
-                )
+                if (mode == ContestMode.CW) {
+                    Spacer(Modifier.width(10.dp))
+                    WpmAdjuster(
+                        wpm = s.contestWpm,
+                        onWpm = { app.prefs.update { p -> p.copy(contestWpm = it) } },
+                        label = "对方码速"
+                    )
+                }
             }
             Spacer(Modifier.height(10.dp))
 
@@ -307,7 +313,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
             // —— 报文内容（默认关闭，真实比赛盲听）——
             Spacer(Modifier.height(10.dp))
-            ScriptPanel(script = script, show = showScript, onToggle = { showScript = !showScript })
+            ScriptPanel(script = script, plain = plainScript, show = showScript, onToggle = { showScript = !showScript })
 
             Spacer(Modifier.height(10.dp))
             CopyPanel(
@@ -324,7 +330,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
 
         BottomPanelBar(
             playing = playing, hasResult = check != null, nextReplayIn = nextReplayIn,
-            onNewStation = { newStation() }, onPlay = { play() },
+            onNewStation = { newStation(); play() }, onPlay = { play() },
             onStop = { stop() }, onCheck = { checkIt() },
             modifier = Modifier.padding(12.dp)
         )
@@ -704,7 +710,7 @@ private fun SMeterPanel(level: Float) {
 }
 
 @Composable
-private fun ScriptPanel(script: String, show: Boolean, onToggle: () -> Unit) {
+private fun ScriptPanel(script: String, plain: String?, show: Boolean, onToggle: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
             .clip(RoundedCornerShape(10.dp)).background(PanelRecessed)
@@ -740,9 +746,18 @@ private fun ScriptPanel(script: String, show: Boolean, onToggle: () -> Unit) {
                     .border(1.dp, PanelLine, RoundedCornerShape(6.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
-                Text(script, color = LedAmber, fontSize = 13.sp,
-                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
-                    letterSpacing = 1.sp, lineHeight = 18.sp)
+                Column {
+                    Text(script, color = LedAmber, fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
+                        letterSpacing = 1.sp, lineHeight = 18.sp)
+                    // SSB 模式：报文内容之后附明文版（非字母解释法），方便对照学习
+                    if (plain != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(plain, color = LedCyan, fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
+                            letterSpacing = 1.sp, lineHeight = 18.sp)
+                    }
+                }
             }
         } else {
             Text("（已隐藏报文，专心盲听）",
@@ -908,7 +923,8 @@ private fun BottomPanelBar(
         PanelButton(
             text = if (hasResult) "已提交" else "提交",
             color = if (hasResult) LedDim else LedGreen, filled = false,
-            enabled = !playing && !hasResult,
+            // 播放中也可直接提交，听完多少算多少，不必等停止
+            enabled = !hasResult,
             modifier = Modifier.weight(1f)
         ) { onCheck() }
     }

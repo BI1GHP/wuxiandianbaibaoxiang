@@ -74,7 +74,8 @@ class RadioVoice(context: Context, private val speaker: Speaker) {
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        // 与底噪轨/CW 轨同类型，避免部分 ROM 对 SPEECH 轨启动时闪避其它音轨
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
                 .setAudioFormat(
