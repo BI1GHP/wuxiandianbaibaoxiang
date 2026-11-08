@@ -1,6 +1,7 @@
 package com.wc.cwtrainer.ui.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,8 +38,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +58,7 @@ import com.wc.cwtrainer.core.QuestionBank
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import android.graphics.BitmapFactory
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -599,6 +605,7 @@ private fun PracticePane(
                     }
                     Text(q.stem, color = PaperInk, fontSize = 15.5.sp, lineHeight = 25.sp,
                         fontFamily = ExamFont)
+                    QuestionImage(q.img)
                     // 卡片右下摩尔斯角落装饰
                     MorseStrip("101",
                         Modifier.align(Alignment.End).padding(top = 6.dp).width(30.dp).height(4.dp),
@@ -938,6 +945,7 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                             }
                             Text(q.stem, color = PaperInk, fontSize = 15.5.sp, lineHeight = 25.sp,
                                 fontFamily = ExamFont)
+                            QuestionImage(q.img)
                         }
                     }
                     Spacer(Modifier.height(10.dp))
@@ -1025,6 +1033,7 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                             Column(Modifier.padding(14.dp)) {
                                 Text(q.stem, color = PaperInk, fontSize = 15.5.sp, lineHeight = 25.sp,
                                     fontFamily = ExamFont)
+                                QuestionImage(q.img)
                             }
                         }
                         Spacer(Modifier.height(10.dp))
@@ -1180,4 +1189,24 @@ private fun ExamHistory(list: List<ExamRecord>, level: ExamLevel) {
             }
         }
     }
+}
+
+/** 题干附图（assets/qimg 下的 PNG），白底卡片内等比显示 */
+@Composable
+private fun QuestionImage(img: String?) {
+    if (img.isNullOrBlank()) return
+    val context = LocalContext.current
+    val bmp = remember(img) {
+        runCatching {
+            context.assets.open(img).use { BitmapFactory.decodeStream(it) }
+        }.getOrNull()?.asImageBitmap()
+    } ?: return
+    Spacer(Modifier.height(8.dp))
+    Image(
+        bitmap = bmp,
+        contentDescription = "题目附图",
+        modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+            .clip(RoundedCornerShape(4.dp)).background(Color.White),
+        contentScale = ContentScale.Fit
+    )
 }

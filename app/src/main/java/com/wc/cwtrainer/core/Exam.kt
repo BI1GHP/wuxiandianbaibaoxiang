@@ -27,7 +27,8 @@ data class Question(
     val isMulti: Boolean,     // true=多选题
     val stem: String,         // 题干
     val options: List<String>,
-    val ans: List<Int>        // 正确选项下标（0=A ...）
+    val ans: List<Int>,     // 正确选项下标（0=A ...）
+    val img: String? = null   // 题干附图（assets 内路径，如 "qimg/LK0497.png"）
 ) {
     val chapter: Int get() = sec.substringBefore('.').toIntOrNull() ?: 0
     val answerText: String

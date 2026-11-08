@@ -32,7 +32,8 @@ object QuestionBank {
                     isMulti = o.getString("type") == "M",
                     stem = o.getString("stem"),
                     options = List(optsArr.length()) { optsArr.getString(it) },
-                    ans = List(ansArr.length()) { ansArr.getInt(it) }
+                    ans = List(ansArr.length()) { ansArr.getInt(it) },
+                    img = o.optString("img").ifBlank { null }
                 )
             }
             cache[level] = list
