@@ -25,16 +25,17 @@ import java.net.URL
 /**
  * 双源自动更新模块：GitHub + Gitee
  *
- * 查询顺序：GitHub Releases API → Gitee Releases API → Gitee Tags API（无 Release 时的 fallback）
- * 国内网络 GitHub 不通时自动切 Gitee，延迟 < 3s（GitHub connectTimeout=2s）。
+ * 查询顺序：Gitee 网页端 → GitHub Releases API。
+ * Gitee 匿名 API 已全面 403（2026 年起必须带 token），改为请求网页端
+ * /releases/latest 并跟随 302 重定向，从最终 URL 里解析最新 tag；
+ * 附件下载走网页直链（releases/download/{tag}/{name}），同样无需登录。
+ * 国内网络 GitHub 不通时自动用 Gitee，延迟 < 3s（connectTimeout=2s）。
  *
  * 发版约定：
- * - GitHub 发 Release + 上传 .apk asset
- * - Gitee 发 Release + 上传 .apk asset 或打 Tag 并挂载附件
- * - tag_name 格式统一 "V主.次.补丁"（如 V1.01, V1.02）
- * - APK 附件名统一 "CW百宝箱_{tag}.apk"（如 CW百宝箱_V1.03.apk）。
- *   Release 资产按 .apk 后缀匹配，改名也能识别；Tags 兜底没有资产列表可查，
- *   只能按这个约定拼下载地址，附件名不一致会 404。
+ * - GitHub / Gitee 均发 Release + 上传 .apk asset
+ * - tag_name 格式统一 "V主.次"（如 V2.06, V2.07）
+ * - Gitee APK 附件名统一 "CW练考通_{tag}.apk"（网页探测拿不到资产列表，
+ *   只能按约定拼下载地址，附件名不一致会 404）。
  */
 object UpdateManager {
 
@@ -42,10 +43,9 @@ object UpdateManager {
     private const val OWNER = "BI1GHP"
     private const val REPO = "wuxiandianbaibaoxiang"
 
-    // 双源 API
+    // 双源：GitHub 用官方 API（匿名可用），Gitee 走网页重定向（匿名 API 已 403）
     private const val GITHUB_RELEASES = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
-    private const val GITEE_RELEASES = "https://gitee.com/api/v5/repos/$OWNER/$REPO/releases/latest"
-    private const val GITEE_TAGS = "https://gitee.com/api/v5/repos/$OWNER/$REPO/tags"
+    private const val GITEE_LATEST_WEB = "https://gitee.com/$OWNER/$REPO/releases/latest"
 
     data class ReleaseInfo(
         val versionName: String,
@@ -72,13 +72,13 @@ object UpdateManager {
         val errors = mutableListOf<String>()
         val candidates = mutableListOf<ReleaseInfo>()
 
-        // 查询顺序：Gitee Releases → Gitee Tags → GitHub
+        // 查询顺序：Gitee 网页端 → GitHub
         // 国内 Gitee 稳定 (<0.3s)，GitHub 常超时 2.5s 白等；
-        // 但三个源结果统一收集后取 versionCode 最大者，不会因顺序丢新
+        // 两个源结果统一收集后取 versionCode 最大者，不会因顺序丢新
 
-        // —— 1. Gitee Releases（首选）——
+        // —— 1. Gitee 网页端（首选；匿名 API 已 403，跟随 302 拿 tag）——
         try {
-            fetchGiteeReleases()?.let { parsed ->
+            fetchGitee()?.let { parsed ->
                 val code = parseVersionCode(parsed.tag)
                 if (code > 0 && parsed.apkUrl != null) {
                     candidates += ReleaseInfo(
@@ -86,31 +86,14 @@ object UpdateManager {
                         htmlUrl = parsed.htmlUrl, apkUrl = parsed.apkUrl,
                         apkSizeBytes = parsed.apkSize, body = parsed.body, source = "Gitee"
                     )
-                    Log.d(TAG, "Gitee Releases hit: ${parsed.tag}, code=$code")
+                    Log.d(TAG, "Gitee hit: ${parsed.tag}, code=$code")
                 }
             }
         } catch (e: Exception) {
-            errors.add("Gitee Releases: ${e.message}")
+            errors.add("Gitee: ${e.message}")
         }
 
-        // —— 2. Gitee Tags（兜底，无 Release 时按约定拼下载链接）——
-        try {
-            fetchGiteeTags()?.let { parsed ->
-                val code = parseVersionCode(parsed.tag)
-                if (code > 0 && parsed.apkUrl != null) {
-                    candidates += ReleaseInfo(
-                        versionName = parsed.tag, versionCode = code,
-                        htmlUrl = parsed.htmlUrl, apkUrl = parsed.apkUrl,
-                        apkSizeBytes = parsed.apkSize, body = parsed.body, source = "Gitee Tags"
-                    )
-                    Log.d(TAG, "Gitee Tags hit: ${parsed.tag}, code=$code")
-                }
-            }
-        } catch (e: Exception) {
-            errors.add("Gitee Tags: ${e.message}")
-        }
-
-        // —— 3. GitHub（仅海外或 Gitee 完全不通时才会命中）——
+        // —— 2. GitHub（仅海外或 Gitee 完全不通时才会命中）——
         try {
             fetchGitHub()?.let { parsed ->
                 val code = parseVersionCode(parsed.tag)
@@ -139,7 +122,7 @@ object UpdateManager {
         UpdateResult(best.versionCode > currentCode, info = best)
     }
 
-    // ================== 三个 source 的 fetch 函数 ==================
+    // ================== 两个 source 的 fetch 函数 ==================
 
     private fun httpGet(urlStr: String, accept: String = "*/*", timeout: Int = 2500): String {
         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
@@ -147,10 +130,6 @@ object UpdateManager {
             readTimeout = timeout
             setRequestProperty("Accept", accept)
             setRequestProperty("User-Agent", "wc-trainer")
-            // Gitee API 支持 token，但我们用公开仓库不需要
-            if (urlStr.contains("gitee.com/api/v5")) {
-                setRequestProperty("Accept", "application/json")
-            }
         }
         val code = conn.responseCode
         if (code != 200) throw Exception("HTTP $code")
@@ -195,62 +174,50 @@ object UpdateManager {
         return 0L
     }
 
-    /** Gitee Releases API —— 字段和 GitHub 略有不同 */
-    private fun fetchGiteeReleases(): Parsed? {
-        val json = httpGet(GITEE_RELEASES)
-        val root = JSONObject(json)
-        // Gitee 的字段可能带星号（tag_name vs. tagName），兼容两种
-        val tag = root.optString("tag_name", "").ifBlank { root.optString("tagName", "") }
-        if (tag.isBlank()) return null
+    /**
+     * Gitee 网页端最新 Release 探测。
+     * 匿名 API（/api/v5/...）已全面 403，网页端 /releases/latest 会 302 到
+     * /releases/tag/{最新tag}，跟随重定向后从最终 URL 解析 tag；
+     * 附件按发版约定拼网页直链，再用 HEAD 取大小（取不到则为 0）。
+     */
+    private fun fetchGitee(): Parsed? {
+        val conn = (URL(GITEE_LATEST_WEB).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 2500
+            readTimeout = 2500
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "wc-trainer")
+        }
+        val code = conn.responseCode
+        if (code != 200) throw Exception("HTTP $code")
+        val finalUrl = conn.url.toString()
+        conn.disconnect()
+        val tag = Regex("/releases/tag/([^/?#]+)").find(finalUrl)
+            ?.groupValues?.get(1) ?: return null
+        val apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/" +
+            Uri.encode("CW练考通_$tag.apk")
         return Parsed(
             tag = tag,
-            htmlUrl = root.optString("html_url", "").ifBlank { root.optString("htmlUrl", "") },
-            body = root.optString("body", ""),
-            apkUrl = findApkGitee(root.optJSONArray("assets")),
-            apkSize = findApkSizeGitee(root.optJSONArray("assets"))
+            htmlUrl = finalUrl,
+            body = "",
+            apkUrl = apkUrl,
+            apkSize = headSize(apkUrl)
         )
     }
 
-    private fun findApkGitee(assets: JSONArray?): String? {
-        if (assets == null) return null
-        for (i in 0 until assets.length()) {
-            val a = assets.getJSONObject(i)
-            val name = a.optString("name")
-            if (name.endsWith(".apk", true)) {
-                // Gitee 用 browser_download_url，缺失时回退到 download_url
-                val url1 = a.optString("browser_download_url")
-                if (url1.isNotBlank()) return url1
-                val url2 = a.optString("download_url")
-                if (url2.isNotBlank()) return url2
-            }
+    /** HEAD 取附件大小，失败返回 0（网页直链支持 HEAD） */
+    private fun headSize(urlStr: String): Long = try {
+        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 2500
+            readTimeout = 2500
+            requestMethod = "HEAD"
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "wc-trainer")
         }
-        return null
-    }
-
-    private fun findApkSizeGitee(assets: JSONArray?): Long {
-        if (assets == null) return 0L
-        for (i in 0 until assets.length()) {
-            val a = assets.getJSONObject(i)
-            if (a.optString("name", "").endsWith(".apk", true)) {
-                return a.optLong("size", 0L)
-            }
-        }
-        return 0L
-    }
-
-    /** Gitee Tags API —— 没有 Release 时的最后兜底 */
-    private fun fetchGiteeTags(): Parsed? {
-        val json = httpGet(GITEE_TAGS)
-        val arr = JSONArray(json)
-        if (arr.length() == 0) return null
-        val tagObj = arr.getJSONObject(0)
-        val tag = tagObj.optString("name", "")
-        if (tag.isBlank()) return null
-        val htmlUrl = "https://gitee.com/$OWNER/$REPO/releases/tag/$tag"
-        // 按发版约定拼下载链接：CW练考通_V1.03.apk（中文名需百分号编码）
-        val apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/" +
-            Uri.encode("CW练考通_$tag.apk")
-        return Parsed(tag = tag, htmlUrl = htmlUrl, body = "", apkUrl = apkUrl, apkSize = 0L)
+        val len = if (conn.responseCode == 200) conn.contentLengthLong else 0L
+        conn.disconnect()
+        len
+    } catch (_: Exception) {
+        0L
     }
 
     // ================== 版本号解析 ==================

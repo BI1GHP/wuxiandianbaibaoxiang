@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -407,7 +408,13 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             CopyPanel(
                 callIn = callIn, serialIn = serialIn,
-                onCall = { callIn = it }, onSerial = { serialIn = it }
+                onCall = { v ->
+                    // 呼号统一大写：用户输入小写自动转大写显示，光标跟随到末尾
+                    val up = v.text.uppercase()
+                    callIn = if (up == v.text) v
+                        else v.copy(text = up, selection = TextRange(up.length), composition = null)
+                },
+                onSerial = { serialIn = it }
             )
 
             // —— 报文内容（默认关闭，真实比赛盲听）——
@@ -876,8 +883,7 @@ private fun CopyPanel(
                 Text("呼号  CALL", color = LedAmber.copy(alpha = 0.95f),
                     fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
-                MetalField(value = callIn, onValueChange = onCall,
-                    placeholder = "呼号…", fontSize = 18)
+                MetalField(value = callIn, onValueChange = onCall, fontSize = 18)
             }
             Column(Modifier.weight(1f)) {
                 Text("RST", color = LedAmber.copy(alpha = 0.95f),
@@ -899,8 +905,7 @@ private fun CopyPanel(
                 Text("序号  NR", color = LedAmber.copy(alpha = 0.95f),
                     fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
-                MetalField(value = serialIn, onValueChange = onSerial,
-                    placeholder = "001", fontSize = 16)
+                MetalField(value = serialIn, onValueChange = onSerial, fontSize = 16)
             }
         }
     }
@@ -909,7 +914,7 @@ private fun CopyPanel(
 @Composable
 private fun MetalField(
     value: TextFieldValue, onValueChange: (TextFieldValue) -> Unit,
-    placeholder: String, fontSize: Int
+    fontSize: Int, placeholder: String? = null
 ) {
     BasicTextField(
         value = value, onValueChange = onValueChange,
@@ -926,7 +931,7 @@ private fun MetalField(
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (value.text.isEmpty()) Text(
+                if (value.text.isEmpty() && placeholder != null) Text(
                     placeholder, color = LedDim.copy(alpha = 0.7f),
                     fontSize = fontSize.sp, fontFamily = FontFamily.Monospace)
                 inner()
