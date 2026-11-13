@@ -244,7 +244,7 @@ fun LabeledSlider(
     }
 }
 
-/** 紧凑码速调节条：- 按钮 + 数值 + + 按钮，5~40 WPM */
+/** 紧凑码速调节条：- 按钮 + 数值 + + 按钮，5~120 WPM */
 @Composable
 fun WpmAdjuster(
     wpm: Int,
@@ -290,7 +290,7 @@ fun WpmAdjuster(
                 .background(Surface1)
                 .border(1.dp, Line, RoundedCornerShape(6.dp))
                 .clickable {
-                    if (wpm < 40) {
+                    if (wpm < 120) {
                         UiSounds.tick()
                         onWpm(wpm + 1)
                     }

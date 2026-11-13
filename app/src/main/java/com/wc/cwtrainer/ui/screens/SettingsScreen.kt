@@ -282,9 +282,9 @@ fun SettingsScreen(
                 LabeledSlider(
                     label = "发送速度",
                     value = s.wpm.toFloat(),
-                    range = 5f..40f,
+                    range = 5f..120f,
                     valueText = "${s.wpm} WPM",
-                    steps = 34
+                    steps = 114
                 ) { v ->
                     val wpm = v.toInt()
                     app.prefs.update {

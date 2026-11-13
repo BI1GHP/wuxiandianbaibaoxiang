@@ -409,9 +409,9 @@ private fun SettingsPanel(
         LabeledSlider(
             label = "发送速度",
             value = wpm.toFloat(),
-            range = 5f..40f,
+            range = 5f..120f,
             valueText = "$wpm WPM",
-            steps = 34,
+            steps = 114,
             onValueChange = { onWpm(it.toInt()) }
         )
         LabeledSlider(

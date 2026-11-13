@@ -252,7 +252,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                             text = ContestGen.script(st, ContestMode.CW),
                             fist = st.cwFist.copy(
                                 wpm = (now.contestWpm + if (i == 0) -4 else 3)
-                                    .coerceIn(8, 40).toDouble()
+                                    .coerceIn(8, 120).toDouble()
                             ),
                             // 音调错开 50~90Hz：同频但可分辨，接近真实 pileup 的"几个人叠在一起"
                             toneHz = (now.toneHz + if (i == 0) -70 else 55).toDouble(),
@@ -464,8 +464,8 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                                 onValueChangeFinished = {
                                     app.prefs.update { p -> p.copy(contestWpm = wpmLv) }
                                 },
-                                valueRange = 5f..40f,
-                                steps = 34,
+                                valueRange = 5f..120f,
+                                steps = 114,
                                 enabled = !noiseDragging,
                                 interactionSource = wpmSrc,
                                 modifier = Modifier.weight(1f).height(22.dp),

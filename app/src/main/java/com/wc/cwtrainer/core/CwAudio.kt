@@ -108,7 +108,9 @@ object CwRenderer {
                 val n = min(item.ms.toLong() * SR / 1000L, total.toLong() - startSample).toInt()
                 if (n <= 0) continue
                 val start = startSample.toInt()
-                val ramp = min(n / 2, (5L * SR / 1000L).toInt())
+                // 上升/下降沿取码元的 1/4，最多 5ms：高速码（120 WPM，点=10ms）下仍保留平顶，
+                // 不会因为包络吃掉整个码元而变闷、变轻。
+                val ramp = min(n / 4, (5L * SR / 1000L).toInt())
 
                 // 预计算每个 sample 的衰落值（每 10ms 采一个点，中间线性插值）
                 val startMsOfSample = item.startMs
