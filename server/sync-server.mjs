@@ -67,6 +67,16 @@ const CODES_FILE = path.join(DATA_DIR, 'codes.json')
 /** 管理后台密码：默认 Hz@18601044023，可用 ADMIN_PASSWORD 覆盖 */
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Hz@18601044023'
 
+/** 账号鉴权模式：legacy（仅旧账号）| hybrid（旧账号 + HMA，默认）| hma（仅 HMA） */
+const AUTH_MODE = (process.env.AUTH_MODE || 'hybrid').toLowerCase()
+/** HMA 研习社账号服务地址（本机） */
+const HMA_BASE = (process.env.HMA_BASE || 'http://127.0.0.1:8787').replace(/\/+$/, '')
+/** 调用 HMA 内部接口的共享令牌 */
+const CW_INTERNAL_TOKEN = process.env.CW_INTERNAL_TOKEN || ''
+/** Bearer 校验结果缓存，减少对 HMA 的重复请求 */
+const HMA_CACHE_TTL_MS = 60_000
+const hmaCache = new Map()
+
 /** admin token 有效期 2 小时，仅存内存（进程重启失效） */
 const ADMIN_TTL_MS = 2 * 3600_000
 const adminTokens = new Map()
@@ -114,7 +124,7 @@ function rateLimited(ip) {
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,POST,OPTIONS',
-  'access-control-allow-headers': 'content-type,x-sync-token,x-coach-token,x-account-token,x-admin-token'
+  'access-control-allow-headers': 'content-type,x-sync-token,x-coach-token,x-account-token,x-admin-token,authorization'
 }
 
 /**
@@ -230,6 +240,103 @@ function issueToken(record) {
 /** 校验备份结构，账号与同步码共用 */
 function validPayload(payload) {
   return Boolean(payload && typeof payload === 'object' && payload.prefs)
+}
+
+// —— HMA 研习社账号：由 HMA 校验 Bearer，CW 只托管备份 ——
+
+function bearerOf(req) {
+  const header = String(req.headers.authorization || '')
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+}
+
+/** 调用 HMA 接口，返回 { status, data }；网络异常向上抛出 */
+async function hmaFetch(pathname, { token = '', internal = false, method = 'GET', body } = {}) {
+  const headers = {}
+  if (token) headers.authorization = `Bearer ${token}`
+  if (internal) headers['x-internal-token'] = CW_INTERNAL_TOKEN
+  if (body !== undefined) headers['content-type'] = 'application/json'
+  const resp = await fetch(`${HMA_BASE}${pathname}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(5000)
+  })
+  let data = null
+  try {
+    data = await resp.json()
+  } catch {
+    data = null
+  }
+  return { status: resp.status, data }
+}
+
+/** 用 Bearer 向 HMA 换取用户（成功缓存 60 秒，失败缓存 10 秒） */
+async function hmaUserFromRequest(req) {
+  const token = bearerOf(req)
+  if (!token) return null
+  const key = hashToken(token)
+  const cached = hmaCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.user
+
+  let user = null
+  try {
+    const { status, data } = await hmaFetch('/api/me', { token })
+    if (status === 200 && data?.code === 0 && data?.data?.id) {
+      user = {
+        id: String(data.data.id),
+        username: String(data.data.username || ''),
+        memberUntil: Number(data.data.memberUntil || 0)
+      }
+    }
+  } catch {
+    user = null
+  }
+  hmaCache.set(key, {
+    expiresAt: Date.now() + (user ? HMA_CACHE_TTL_MS : 10_000),
+    user
+  })
+  if (hmaCache.size > 5000) {
+    const now = Date.now()
+    for (const [k, v] of hmaCache) if (v.expiresAt <= now) hmaCache.delete(k)
+  }
+  return user
+}
+
+/** 统一身份：优先 Bearer（HMA），其次旧版 x-account-token */
+async function identityFromRequest(req) {
+  const hma = await hmaUserFromRequest(req)
+  if (hma) {
+    return { kind: 'hma', id: hma.id, username: hma.username, memberUntil: hma.memberUntil }
+  }
+  const record = await accountFromRequest(req)
+  if (record) {
+    return {
+      kind: 'legacy',
+      id: record.id,
+      username: record.username,
+      memberUntil: Number(record.memberUntil || 0),
+      record
+    }
+  }
+  return null
+}
+
+/** HMA 账号备份：文件名即 HMA 用户 UUID */
+async function readHmaAccount(id) {
+  try {
+    return JSON.parse(await readFile(accountFile(id), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+async function writeHmaAccount(id, username, payload) {
+  const updatedAt = Date.now()
+  await writeFile(accountFile(id), JSON.stringify({ id, username, payload, updatedAt }), {
+    encoding: 'utf8',
+    mode: 0o600
+  })
+  return updatedAt
 }
 
 // —— 会员开关与管理后台 ——
@@ -584,6 +691,29 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, time: Date.now(), members, missing })
     }
 
+    // —— HMA 账号代理：App 只连 CW，CW 转发到本机 HMA ——
+    if (pathname === '/api/auth/me' && req.method === 'GET') {
+      if (rateLimited(ip)) return send(res, 429, { ok: false, error: '操作太频繁，请稍后再试' })
+      const token = bearerOf(req)
+      if (!token) return send(res, 401, { code: 40101, message: '未登录或登录已过期', data: null })
+      const resp = await hmaFetch('/api/me', { token })
+      return send(res, resp.status, resp.data ?? { code: 50001, message: '账号服务暂时不可用', data: null })
+    }
+
+    if ((pathname === '/api/auth/register' || pathname === '/api/auth/login' ||
+        pathname === '/api/auth/refresh' || pathname === '/api/auth/logout') && req.method === 'POST') {
+      if (rateLimited(ip)) return send(res, 429, { ok: false, error: '操作太频繁，请稍后再试' })
+      const raw = await readBody(req)
+      let body
+      try {
+        body = JSON.parse(raw)
+      } catch {
+        return send(res, 400, { ok: false, error: 'JSON 格式错误' })
+      }
+      const resp = await hmaFetch(pathname, { method: 'POST', body })
+      return send(res, resp.status, resp.data ?? { code: 50001, message: '账号服务暂时不可用', data: null })
+    }
+
     // —— 账号：注册 / 登录 / 上传 / 下载 ——
     if (pathname.startsWith('/api/account/') && req.method === 'POST' &&
       (pathname === '/api/account/register' || pathname === '/api/account/login')
@@ -591,6 +721,9 @@ const server = http.createServer(async (req, res) => {
       if (rateLimited(ip)) return send(res, 429, { ok: false, error: '操作太频繁，请稍后再试' })
       if (blocked(ip)) {
         return send(res, 429, { ok: false, error: '尝试次数过多，请 10 分钟后再试' })
+      }
+      if (AUTH_MODE === 'hma') {
+        return send(res, 410, { ok: false, error: '请升级 App 后使用 HMA 研习社账号登录' })
       }
 
       const raw = await readBody(req)
@@ -657,10 +790,25 @@ const server = http.createServer(async (req, res) => {
       })
     }
 
+    if (pathname === '/api/account/me' && req.method === 'GET') {
+      if (rateLimited(ip)) return send(res, 429, { ok: false, error: '操作太频繁，请稍后再试' })
+      const identity = await identityFromRequest(req)
+      if (!identity) return send(res, 401, { ok: false, error: '登录已失效，请重新登录' })
+      const record = identity.kind === 'hma' ? await readHmaAccount(identity.id) : identity.record
+      return send(res, 200, {
+        ok: true,
+        source: identity.kind,
+        username: identity.username,
+        memberUntil: identity.memberUntil,
+        updatedAt: Number(record?.updatedAt || 0),
+        hasPayload: Boolean(record?.payload)
+      })
+    }
+
     if (pathname === '/api/account/push' && req.method === 'POST') {
       if (rateLimited(ip)) return send(res, 429, { ok: false, error: '操作太频繁，请稍后再试' })
-      const record = await accountFromRequest(req)
-      if (!record) return send(res, 401, { ok: false, error: '登录已失效，请重新登录' })
+      const identity = await identityFromRequest(req)
+      if (!identity) return send(res, 401, { ok: false, error: '登录已失效，请重新登录' })
 
       const raw = await readBody(req)
       let body
@@ -673,22 +821,29 @@ const server = http.createServer(async (req, res) => {
         return send(res, 400, { ok: false, error: '缺少有效的备份数据' })
       }
 
-      record.payload = body.payload
-      record.updatedAt = Date.now()
-      await writeAccount(record)
-      return send(res, 200, { ok: true, updatedAt: record.updatedAt })
+      let updatedAt
+      if (identity.kind === 'hma') {
+        updatedAt = await writeHmaAccount(identity.id, identity.username, body.payload)
+      } else {
+        identity.record.payload = body.payload
+        identity.record.updatedAt = Date.now()
+        await writeAccount(identity.record)
+        updatedAt = identity.record.updatedAt
+      }
+      return send(res, 200, { ok: true, updatedAt })
     }
 
     if (pathname === '/api/account/pull' && req.method === 'GET') {
       if (rateLimited(ip)) return send(res, 429, { ok: false, error: '操作太频繁，请稍后再试' })
-      const record = await accountFromRequest(req)
-      if (!record) return send(res, 401, { ok: false, error: '登录已失效，请重新登录' })
-      if (!record.payload) {
+      const identity = await identityFromRequest(req)
+      if (!identity) return send(res, 401, { ok: false, error: '登录已失效，请重新登录' })
+      const record = identity.kind === 'hma' ? await readHmaAccount(identity.id) : identity.record
+      if (!record || !record.payload) {
         return send(res, 404, { ok: false, error: '该账号还没有上传过进度' })
       }
       return send(res, 200, {
         ok: true,
-        username: record.username,
+        username: record.username || identity.username,
         updatedAt: Number(record.updatedAt || 0),
         payload: record.payload
       })
@@ -702,13 +857,24 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/member/status' && req.method === 'GET') {
       if (rateLimited(ip)) return send(res, 429, { ok: false, error: '操作太频繁，请稍后再试' })
-      const record = await accountFromRequest(req)
-      if (!record) return send(res, 401, { ok: false, error: '登录已失效，请重新登录' })
+      const identity = await identityFromRequest(req)
+      if (!identity) return send(res, 401, { ok: false, error: '登录已失效，请重新登录' })
       const cfg = await readMemberConfig()
-      const until = Number(record.memberUntil || 0)
+      let until = identity.memberUntil
+      if (identity.kind === 'hma') {
+        // 会员状态以 HMA 为准，避免 Bearer 缓存导致刚兑换仍显示未开通
+        try {
+          const live = await hmaFetch('/api/member/status', { token: bearerOf(req) })
+          if (live.status === 200 && live.data?.code === 0) {
+            until = Number(live.data.data?.until) || 0
+          }
+        } catch {
+          until = identity.memberUntil
+        }
+      }
       return send(res, 200, {
         ok: true,
-        username: record.username,
+        username: identity.username,
         enabled: cfg.enabled,
         price: cfg.price,
         memberUntil: until,
@@ -722,8 +888,8 @@ const server = http.createServer(async (req, res) => {
       if (!cfg.enabled) {
         return send(res, 403, { ok: false, error: '会员功能暂未开放' })
       }
-      const record = await accountFromRequest(req)
-      if (!record) return send(res, 401, { ok: false, error: '请先在账号云同步登录' })
+      const identity = await identityFromRequest(req)
+      if (!identity) return send(res, 401, { ok: false, error: '请先在账号云同步登录' })
       // 支付渠道尚未接入：先保留接口与订单入口，不产生任何扣费
       return send(res, 501, { ok: false, error: '支付渠道尚未接入，可使用兑换码开通或联系管理员' })
     }
@@ -735,8 +901,8 @@ const server = http.createServer(async (req, res) => {
       if (!cfg.enabled) {
         return send(res, 403, { ok: false, error: '会员功能暂未开放' })
       }
-      const record = await accountFromRequest(req)
-      if (!record) return send(res, 401, { ok: false, error: '请先在账号云同步登录' })
+      const identity = await identityFromRequest(req)
+      if (!identity) return send(res, 401, { ok: false, error: '请先在账号云同步登录' })
 
       const raw = await readBody(req)
       let body
@@ -750,6 +916,35 @@ const server = http.createServer(async (req, res) => {
         return send(res, 400, { ok: false, error: '兑换码格式不正确' })
       }
 
+      // HMA 账号：兑换与权益都记在 HMA，CW 只做转发
+      if (identity.kind === 'hma') {
+        let resp
+        try {
+          resp = await hmaFetch('/api/member/redeem', {
+            token: bearerOf(req),
+            method: 'POST',
+            body: { code }
+          })
+        } catch {
+          return send(res, 502, { ok: false, error: '会员服务暂时不可用，请稍后再试' })
+        }
+        if (resp.status === 200 && resp.data?.code === 0) {
+          // 兑换后清掉 Bearer 缓存，下一次查询立即看到新到期时间
+          hmaCache.delete(hashToken(bearerOf(req)))
+          return send(res, 200, {
+            ok: true,
+            username: identity.username,
+            days: Number(resp.data.data?.days) || 0,
+            memberUntil: Number(resp.data.data?.until) || 0
+          })
+        }
+        return send(res, resp.status === 200 ? 400 : resp.status, {
+          ok: false,
+          error: resp.data?.message || '兑换失败'
+        })
+      }
+
+      const record = identity.record
       const codes = await readCodes()
       const item = codes[code]
       if (!item) return send(res, 404, { ok: false, error: '兑换码无效' })
@@ -837,12 +1032,40 @@ const server = http.createServer(async (req, res) => {
       }
 
       const username = String(body?.username || '').trim()
-      if (!USER_RE.test(username)) {
+      if (!username || username.length > 120) {
+        return send(res, 400, { ok: false, error: '用户名格式不正确' })
+      }
+      if (!CW_INTERNAL_TOKEN && !USER_RE.test(username)) {
         return send(res, 400, { ok: false, error: '用户名格式不正确' })
       }
       const days = Math.floor(Number(body?.days))
       if (!Number.isFinite(days) || days < 0 || days > 3650) {
         return send(res, 400, { ok: false, error: '天数需为 0–3650' })
+      }
+
+      // 会员数据在 HMA：优先走内部接口
+      if (CW_INTERNAL_TOKEN) {
+        let resp
+        try {
+          resp = await hmaFetch('/api/internal/member/grant', {
+            internal: true,
+            method: 'POST',
+            body: { account: username, days }
+          })
+        } catch {
+          return send(res, 502, { ok: false, error: '会员服务暂时不可用' })
+        }
+        if (resp.status === 200 && resp.data?.code === 0) {
+          return send(res, 200, {
+            ok: true,
+            username: resp.data.data?.username || username,
+            memberUntil: Number(resp.data.data?.until) || 0
+          })
+        }
+        return send(res, resp.status === 200 ? 400 : resp.status, {
+          ok: false,
+          error: resp.data?.message || '操作失败'
+        })
       }
 
       const record = await readAccount(accountId(username))
@@ -854,6 +1077,33 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/admin/codes' && req.method === 'GET') {
       if (!adminAuthed(req)) return send(res, 401, { ok: false, error: '管理员登录已失效' })
+      if (CW_INTERNAL_TOKEN) {
+        let resp
+        try {
+          resp = await hmaFetch('/api/internal/member/codes', { internal: true })
+        } catch {
+          return send(res, 502, { ok: false, error: '会员服务暂时不可用' })
+        }
+        if (resp.status !== 200 || resp.data?.code !== 0) {
+          return send(res, resp.status === 200 ? 400 : resp.status, {
+            ok: false,
+            error: resp.data?.message || '读取兑换码失败'
+          })
+        }
+        const list = (resp.data.data || []).map((item) => ({
+          code: item.code,
+          days: Number(item.days) || 0,
+          createdAt: Number(item.createdAt) || 0,
+          usedBy: item.usedBy || '',
+          usedAt: Number(item.usedAt) || 0
+        }))
+        return send(res, 200, {
+          ok: true,
+          codes: list,
+          unused: list.filter((c) => !c.usedBy).length,
+          total: list.length
+        })
+      }
       const codes = await readCodes()
       const list = Object.entries(codes)
         .map(([code, item]) => ({
@@ -892,6 +1142,26 @@ const server = http.createServer(async (req, res) => {
         return send(res, 400, { ok: false, error: '一次最多生成 100 个兑换码' })
       }
 
+      if (CW_INTERNAL_TOKEN) {
+        let resp
+        try {
+          resp = await hmaFetch('/api/internal/member/codes', {
+            internal: true,
+            method: 'POST',
+            body: { days, count }
+          })
+        } catch {
+          return send(res, 502, { ok: false, error: '会员服务暂时不可用' })
+        }
+        if (resp.status === 200 && resp.data?.code === 0) {
+          return send(res, 200, { ok: true, days, codes: resp.data.data?.codes || [] })
+        }
+        return send(res, resp.status === 200 ? 400 : resp.status, {
+          ok: false,
+          error: resp.data?.message || '生成兑换码失败'
+        })
+      }
+
       const codes = await readCodes()
       const created = []
       for (let i = 0; i < count; i++) {
@@ -920,6 +1190,10 @@ server.listen(PORT, HOST, async () => {
   console.log(TTL_MS ? `保留期: ${TTL_DAYS} 天` : '保留期: 永不过期')
   console.log(SYNC_TOKEN ? '访问口令: 已启用' : '访问口令: 未启用')
   console.log(COACH_TOKEN ? '教练口令: 已启用' : '教练看板: 无需口令')
+  console.log(`账号鉴权: ${AUTH_MODE}${AUTH_MODE === 'legacy' ? '' : `（HMA ${HMA_BASE}）`}`)
+  if (AUTH_MODE !== 'legacy' && !CW_INTERNAL_TOKEN) {
+    console.log('提示: 未配置 CW_INTERNAL_TOKEN，会员后台将回退到本地数据')
+  }
   const memberCfg = await readMemberConfig()
   console.log(`会员功能: ${memberCfg.enabled ? '已开放' : '暂未开放'}（管理后台 /admin.html）`)
   if (!process.env.ADMIN_PASSWORD) console.log('管理密码: 使用默认值，建议设置 ADMIN_PASSWORD')

@@ -46,6 +46,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.core.AccountClient
+import com.wc.cwtrainer.core.AccountSnapshot
+import com.wc.cwtrainer.core.AccountStore
+import com.wc.cwtrainer.core.ApiException
 import com.wc.cwtrainer.core.Backup
 import com.wc.cwtrainer.core.DEFAULT_SYNC_SERVER
 import com.wc.cwtrainer.core.skinOf
@@ -91,8 +94,11 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
         )
     }
     var username by remember { mutableStateOf(sp.getString("username", "") ?: "") }
+    var email by remember { mutableStateOf(sp.getString("email", "") ?: "") }
     var password by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf(sp.getString("token", "") ?: "") }
+    val savedTokens = remember { AccountStore.load(context) }
+    var token by remember { mutableStateOf(savedTokens.accessToken) }
+    var refreshToken by remember { mutableStateOf(savedTokens.refreshToken) }
     var lastSync by remember { mutableStateOf(sp.getLong("lastSync", 0L)) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -102,51 +108,95 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
 
     LaunchedEffect(server) { sp.edit().putString("server", server).apply() }
     LaunchedEffect(username) { sp.edit().putString("username", username).apply() }
-    LaunchedEffect(token) { sp.edit().putString("token", token).apply() }
+    LaunchedEffect(email) { sp.edit().putString("email", email).apply() }
     LaunchedEffect(lastSync) { sp.edit().putLong("lastSync", lastSync).apply() }
 
     val loggedIn = token.isNotBlank() && username.isNotBlank()
     val s = app.prefs.data
     val points = (trainingPoints(app.stats) - s.spentPoints).coerceAtLeast(0)
 
-    fun begin(): Boolean {
+    fun begin(register: Boolean): Boolean {
         if (server.isBlank()) {
             status = "请先填写服务器地址"; statusOk = false; return false
         }
         if (username.length < 3) {
             status = "用户名至少 3 位"; statusOk = false; return false
         }
-        if (password.length < 6) {
-            status = "密码至少 6 位"; statusOk = false; return false
+        if (register && (!email.contains("@") || !email.contains("."))) {
+            status = "注册需要填写有效邮箱"; statusOk = false; return false
+        }
+        if (password.length < 8) {
+            status = "密码至少 8 位"; statusOk = false; return false
         }
         return true
     }
 
+    /** 取可用 access token；临近过期时自动刷新 */
+    suspend fun freshToken(): String {
+        val tokens = AccountStore.ensureFresh(context, server).getOrThrow()
+        token = tokens.accessToken
+        refreshToken = tokens.refreshToken
+        return tokens.accessToken
+    }
+
+    /** 请求遇到 401 时刷新一次并重试 */
+    suspend fun <T> authed(block: suspend (String) -> T): T {
+        val first = freshToken()
+        return try {
+            block(first)
+        } catch (error: ApiException) {
+            if (error.status != 401) throw error
+            val refreshed = AccountClient.refresh(server, refreshToken).getOrThrow()
+            val next = AccountStore.Tokens(
+                accessToken = refreshed.accessToken,
+                refreshToken = refreshed.refreshToken,
+                expiresAt = System.currentTimeMillis() / 1000 + refreshed.expiresIn,
+                username = refreshed.user.username.ifBlank { username }
+            )
+            AccountStore.save(context, next)
+            token = next.accessToken
+            refreshToken = next.refreshToken
+            block(next.accessToken)
+        }
+    }
+
     fun submit(register: Boolean) {
-        if (!begin()) return
+        if (!begin(register)) return
         scope.launch {
             busy = true
             status = if (register) "注册中…" else "登录中…"
             statusOk = false
             val result = if (register) {
-                AccountClient.register(server, username, password)
+                AccountClient.register(server, username, email.trim(), password)
             } else {
                 AccountClient.login(server, username, password)
             }
             result
-                .onSuccess {
-                    token = it.token
-                    username = it.username
-                    lastSync = it.updatedAt
+                .onSuccess { auth ->
+                    val displayName = auth.user.username.ifBlank { username }
+                    AccountStore.save(
+                        context,
+                        AccountStore.Tokens(
+                            accessToken = auth.accessToken,
+                            refreshToken = auth.refreshToken,
+                            expiresAt = System.currentTimeMillis() / 1000 + auth.expiresIn,
+                            username = displayName
+                        )
+                    )
+                    token = auth.accessToken
+                    refreshToken = auth.refreshToken
+                    username = displayName
                     password = ""
-                    status = if (register) {
-                        "注册成功，已登录"
-                    } else if (it.hasPayload) {
-                        "已登录，可下载云端进度"
-                    } else {
-                        "已登录，云端还没有进度"
-                    }
+                    status = if (register) "注册成功，已登录" else "已登录"
                     statusOk = true
+                    AccountClient.profile(server, auth.accessToken).onSuccess { profile ->
+                        lastSync = profile.updatedAt
+                        status = when {
+                            register -> "注册成功，已登录"
+                            profile.hasPayload -> "已登录，可下载云端进度"
+                            else -> "已登录，云端还没有进度"
+                        }
+                    }
                 }
                 .onFailure {
                     status = "${if (register) "注册" else "登录"}失败：${it.message}"
@@ -170,8 +220,8 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
                 .padding(horizontal = 16.dp)
         ) {
             Text(
-                text = "注册账号后可在多台设备与网页端（/account.html）之间同步进度；密码只在服务端保存加盐哈希。" +
-                    "不上传时 App 完全离线可用。",
+                text = "使用 HMA 研习社账号登录后，可在多台设备与网页端（/account.html）之间同步进度；" +
+                    "CW 不保存密码，只验证 HMA 签发的令牌。不上传时 App 完全离线可用。",
                 color = TextDim,
                 fontSize = 10.sp,
                 lineHeight = 15.sp,
@@ -182,7 +232,7 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
             AccountField(
                 label = "服务器地址 ENDPOINT",
                 value = server,
-                placeholder = "http://192.168.1.20:8787"
+                placeholder = DEFAULT_SYNC_SERVER
             ) { server = it.trim() }
 
             Spacer(Modifier.height(12.dp))
@@ -194,9 +244,17 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
             AccountField(
+                label = "邮箱 EMAIL（注册必填）",
+                value = email,
+                placeholder = "用于找回账号，登录时可留空",
+                keyboardType = KeyboardType.Email
+            ) { email = it.trim().take(120) }
+
+            Spacer(Modifier.height(12.dp))
+            AccountField(
                 label = "密码 PASSWORD",
                 value = password,
-                placeholder = "至少 6 位",
+                placeholder = "至少 8 位",
                 password = true,
                 keyboardType = KeyboardType.Password
             ) { password = it.take(64) }
@@ -232,7 +290,11 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
                             scope.launch {
                                 busy = true
                                 status = "上传中…"; statusOk = false
-                                AccountClient.push(server, token, Backup.export(context))
+                                runCatching {
+                                    authed<Long> { fresh ->
+                                        AccountClient.push(server, fresh, Backup.export(context)).getOrThrow()
+                                    }
+                                }
                                     .onSuccess {
                                         lastSync = it
                                         status = "已上传 · ${formatAccountTime(it)}"; statusOk = true
@@ -247,7 +309,11 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
                             scope.launch {
                                 busy = true
                                 status = "读取中…"; statusOk = false
-                                AccountClient.pull(server, token)
+                                runCatching {
+                                    authed<AccountSnapshot> { fresh ->
+                                        AccountClient.pull(server, fresh).getOrThrow()
+                                    }
+                                }
                                     .onSuccess {
                                         pendingPayload = it.payload
                                         lastSync = it.updatedAt
@@ -264,7 +330,9 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     Row {
                         Pill("退出登录", false) {
+                            AccountStore.clear(context)
                             token = ""
+                            refreshToken = ""
                             password = ""
                             status = "已退出登录"
                             statusOk = true

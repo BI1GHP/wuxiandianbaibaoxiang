@@ -3,7 +3,7 @@
 零依赖 Node 服务，提供两种搬运备份 JSON 的方式：
 
 - **同步码**：不建账号，同步码本身就是取回数据的钥匙；
-- **账号**：用户名 + 密码注册登录，密码只存加盐 scrypt 哈希，登录后按账号上传 / 下载；
+- **账号**：使用 HMA 研习社账号登录（CW 只验证 Bearer 令牌，不保存密码），按账号上传 / 下载；
 - **会员开关**：默认关闭，由管理后台（`/admin.html`）控制开放 / 关闭，关闭需管理员密码。
 
 ## 目录结构
@@ -16,9 +16,8 @@ server/
 ├─ public/coach.html    教练看板
 ├─ public/admin.html    管理后台（会员开关 / 手动开通会员）
 ├─ data/                运行时自动创建，按同步码存 <CODE>.json
-│  ├─ accounts/         账号数据 <id>.json（哈希、token 哈希、会员到期、备份）
-│  ├─ member.json       会员功能开关（不存在时默认关闭）
-│  └─ codes.json        兑换码（卡密）与使用记录
+│  ├─ accounts/         备份 <HMA userId>.json（旧版账号为 <id>.json）
+│  ├─ member.json       会员功能开关（会员数据与兑换码在 HMA 数据库）
 └─ README.md
 ```
 
@@ -65,20 +64,38 @@ App 端填写：设置 → 数据备份 → 进度同步 → 服务器地址填 
 可随时开启 / 关闭会员功能（关闭时需再次输入密码），也可按账号手动开通会员。
 App 端入口：设置 → 会员与支付 → 会员中心。
 
+## 账号体系（HMA 统一登录）
+
+账号、密码与会员数据都在 HMA 研习社（`/opt/hma-web`，本机 8787）；
+CW 通过 `/api/auth/*` 代理登录，并用 Bearer 校验备份请求，自己不保存密码。
+
+| 环境变量 | 说明 |
+| --- | --- |
+| `AUTH_MODE` | `hybrid`（默认，兼容旧账号）\| `hma`（仅 HMA）\| `legacy` |
+| `HMA_BASE` | HMA 地址，默认 `http://127.0.0.1:8787` |
+| `CW_INTERNAL_TOKEN` | 与 HMA 共享的内部令牌（会员后台 / 兑换码） |
+
+旧版 `/api/account/register|login` 在 `hybrid` 下继续可用，`hma` 模式返回 410。
+
 ## 接口
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/sync` | 写入，body：`{"code":"K7M2QX","payload":{...备份 JSON...}}` |
 | GET | `/api/sync?code=K7M2QX` | 读取，返回 `{ok, code, updatedAt, payload}` |
-| POST | `/api/account/register` | 注册，body：`{"username":"bg1abc","password":"******"}`，返回 `{ok, username, token}` |
-| POST | `/api/account/login` | 登录，body 同上，返回 `{ok, username, token, updatedAt, hasPayload}` |
-| POST | `/api/account/push` | 上传，body：`{"payload":{...}}`，需请求头 `x-account-token` |
-| GET | `/api/account/pull` | 下载，需请求头 `x-account-token`，返回 `{ok, username, updatedAt, payload}` |
+| POST | `/api/auth/register` | 注册 HMA 账号（代理），body `{username,email,password}` |
+| POST | `/api/auth/login` | 登录 HMA 账号（代理），body `{account,password}`，返回 `{code,data:{user,accessToken,refreshToken,expiresIn}}` |
+| POST | `/api/auth/refresh` | 刷新令牌（代理），body `{refreshToken}` |
+| GET | `/api/auth/me` | 当前 HMA 账号，需 `Authorization: Bearer` |
+| GET | `/api/account/me` | 账号资料与备份状态，需 Bearer，返回 `{ok,source,username,memberUntil,updatedAt,hasPayload}` |
+| POST | `/api/account/register` | 旧版注册（`hybrid` 下可用） |
+| POST | `/api/account/login` | 旧版登录（`hybrid` 下可用） |
+| POST | `/api/account/push` | 上传，body `{"payload":{...}}`，需 Bearer（兼容 `x-account-token`） |
+| GET | `/api/account/pull` | 下载，需 Bearer（兼容 `x-account-token`），返回 `{ok, username, updatedAt, payload}` |
 | GET | `/api/member/config` | 会员开关（公开）：`{ok, enabled, price, updatedAt}` |
-| GET | `/api/member/status` | 当前账号会员状态，需 `x-account-token` |
+| GET | `/api/member/status` | 当前账号会员状态，需 Bearer（数据来自 HMA） |
 | POST | `/api/member/checkout` | 下单入口：关闭时 403，支付未接入时 501，不扣费 |
-| POST | `/api/member/redeem` | 兑换码开通，body `{"code":"..."}`，需 `x-account-token` |
+| POST | `/api/member/redeem` | 兑换码开通，body `{"code":"..."}`，需 Bearer；卡密与权益在 HMA |
 | POST | `/api/admin/login` | 管理员登录，body `{"password":"..."}`，返回 `{ok, token, expiresAt}` |
 | GET | `/api/admin/member` | 读取会员开关，需 `x-admin-token` |
 | POST | `/api/admin/member` | `{"enabled":true/false,"password":"..."}`；关闭必须带密码 |

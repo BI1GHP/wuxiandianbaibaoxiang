@@ -84,7 +84,10 @@ object MemberClient {
             connectTimeout = TIMEOUT_MS
             readTimeout = TIMEOUT_MS
             setRequestProperty("accept", "application/json")
-            if (token.isNotBlank()) setRequestProperty("x-account-token", token.trim())
+            if (token.isNotBlank()) {
+                setRequestProperty("authorization", "Bearer ${token.trim()}")
+                setRequestProperty("x-account-token", token.trim())
+            }
             if (method == "POST") {
                 doOutput = true
                 setRequestProperty("content-type", "application/json; charset=utf-8")
@@ -99,7 +102,9 @@ object MemberClient {
         conn.disconnect()
         val obj = if (text.isBlank()) JSONObject() else JSONObject(text)
         if (code !in 200..299 || !obj.optBoolean("ok")) {
-            throw IllegalStateException(obj.optString("error", "请求失败"))
+            val message = obj.optString("message").ifBlank { obj.optString("error") }
+                .ifBlank { "请求失败" }
+            throw IllegalStateException(message)
         }
         return obj
     }

@@ -158,15 +158,18 @@
     <h1>CW练考通</h1>
     <div class="sub">ACCOUNT SYNC · 账号云同步</div>
     <p class="hint">
-      注册一个账号即可在 App 与网页之间同步进度，密码只保存加盐哈希。
-      网页端登录后可上传或下载同一份备份；手机端在「设置 → 账号云同步」使用同样的地址与账号。
+      使用 HMA 研习社账号登录，即可在 App 与网页之间同步进度；CW 只验证令牌，不保存密码。
+      手机端在「设置 → 账号云同步」使用同一账号。
     </p>
 
-    <label for="user">用户名 USERNAME</label>
-    <input id="user" type="text" maxlength="20" placeholder="3–20 位字母、数字或下划线" autocomplete="username" />
+    <label for="user">用户名 / 邮箱 ACCOUNT</label>
+    <input id="user" type="text" maxlength="120" placeholder="用户名或邮箱" autocomplete="username" />
+
+    <label for="email">邮箱 EMAIL（注册必填）</label>
+    <input id="email" type="email" maxlength="120" placeholder="用于注册，登录时可留空" autocomplete="email" />
 
     <label for="pass">密码 PASSWORD</label>
-    <input id="pass" type="password" maxlength="64" placeholder="至少 6 位" autocomplete="current-password" />
+    <input id="pass" type="password" maxlength="64" placeholder="至少 8 位" autocomplete="current-password" />
 
     <div class="row">
       <button id="login" class="primary">登录</button>
@@ -204,10 +207,12 @@
 
 <script>
 const userInput = document.getElementById('user')
+const emailInput = document.getElementById('email')
 const passInput = document.getElementById('pass')
 const statusEl = document.getElementById('status')
 const card = document.getElementById('card')
-let token = sessionStorage.getItem('cw_account_token') || ''
+let token = localStorage.getItem('cw_access') || ''
+let refreshToken = localStorage.getItem('cw_refresh') || ''
 let current = null
 
 function setStatus(text, kind) {
@@ -216,19 +221,61 @@ function setStatus(text, kind) {
 }
 
 function headers(extra) {
-  const out = { ...extra }
-  if (token) out['x-account-token'] = token
+  const out = { ...(extra || {}) }
+  if (token) out['authorization'] = 'Bearer ' + token
   return out
 }
 
-async function post(path, body, auth) {
+function saveTokens(data) {
+  token = data.accessToken || ''
+  refreshToken = data.refreshToken || refreshToken
+  localStorage.setItem('cw_access', token)
+  localStorage.setItem('cw_refresh', refreshToken)
+}
+
+async function refreshAccess() {
+  if (!refreshToken) throw new Error('登录已过期，请重新登录')
+  const res = await fetch('/api/auth/refresh', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refreshToken })
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || data.code !== 0) throw new Error(data.message || '登录已过期，请重新登录')
+  saveTokens(data.data || {})
+}
+
+async function apiFetch(path, options) {
+  const opts = options || {}
+  let res = await fetch(path, { ...opts, headers: headers(opts.headers) })
+  if (res.status === 401 && refreshToken) {
+    await refreshAccess()
+    res = await fetch(path, { ...opts, headers: headers(opts.headers) })
+  }
+  return res
+}
+
+async function post(path, body) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: headers({ 'content-type': 'application/json' }),
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body || {})
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok || !data.ok) throw new Error(data.error || '请求失败')
+  if (!res.ok || (typeof data.code === 'number' && data.code !== 0)) {
+    throw new Error(data.message || data.error || '请求失败')
+  }
+  return data
+}
+
+async function apiPost(path, body) {
+  const res = await apiFetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body || {})
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.ok) throw new Error(data.message || data.error || '请求失败')
   return data
 }
 
@@ -242,20 +289,42 @@ function render(data) {
   document.getElementById('download').disabled = !data.payload
 }
 
-function store(data) {
-  token = data.token || ''
-  sessionStorage.setItem('cw_account_token', token)
-  render(data)
+function store(auth) {
+  const payload = auth.data || auth
+  saveTokens(payload)
+  const user = payload.user || {}
+  const name = user.username || userInput.value.trim()
+  localStorage.setItem('cw_user', name)
+  document.getElementById('who').textContent = name || '—'
+  document.getElementById('meta').textContent = user.email ? '已登录 · ' + user.email : '已登录'
+  card.classList.add('on')
   loadMember()
+  loadProfile()
+}
+
+async function loadProfile() {
+  if (!token) return
+  try {
+    const res = await apiFetch('/api/account/me')
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.ok) throw new Error(data.message || data.error || '读取失败')
+    document.getElementById('meta').textContent = data.updatedAt
+      ? '最近上传 ' + new Date(data.updatedAt).toLocaleString()
+      : '该账号还没有上传过进度'
+    document.getElementById('download').disabled = !data.hasPayload
+    if (data.hasPayload) document.getElementById('pull').click()
+  } catch (error) {
+    setStatus(error.message, 'err')
+  }
 }
 
 async function loadMember() {
   const el = document.getElementById('memberStatus')
   if (!token) return
   try {
-    const res = await fetch('/api/member/status', { headers: headers() })
+    const res = await apiFetch('/api/member/status')
     const data = await res.json().catch(() => ({}))
-    if (!res.ok || !data.ok) throw new Error(data.error || '读取失败')
+    if (!res.ok || !data.ok) throw new Error(data.message || data.error || '读取失败')
     document.getElementById('memberMeta').textContent = data.active
       ? 'PLUS · 有效期至 ' + new Date(data.memberUntil).toLocaleDateString()
       : '免费版'
@@ -273,7 +342,7 @@ document.getElementById('redeemBtn').addEventListener('click', async () => {
   if (!token) return setStatus(el, '请先登录账号', 'err')
   setStatus(el, '兑换中…')
   try {
-    const data = await post('/api/member/redeem', {
+    const data = await apiPost('/api/member/redeem', {
       code: document.getElementById('redeem').value.replace(/[^A-Za-z0-9]/g, '')
     })
     document.getElementById('redeem').value = ''
@@ -287,8 +356,9 @@ document.getElementById('redeemBtn').addEventListener('click', async () => {
 document.getElementById('register').addEventListener('click', async () => {
   setStatus('注册中…')
   try {
-    const data = await post('/api/account/register', {
+    const data = await post('/api/auth/register', {
       username: userInput.value.trim(),
+      email: emailInput.value.trim(),
       password: passInput.value
     })
     store(data)
@@ -301,16 +371,12 @@ document.getElementById('register').addEventListener('click', async () => {
 document.getElementById('login').addEventListener('click', async () => {
   setStatus('登录中…')
   try {
-    const data = await post('/api/account/login', {
-      username: userInput.value.trim(),
+    const data = await post('/api/auth/login', {
+      account: userInput.value.trim(),
       password: passInput.value
     })
     store(data)
-    setStatus(data.hasPayload ? '已登录，可下载进度' : '已登录，请先上传一份备份', 'ok')
-    if (data.hasPayload) {
-      // 登录后直接取一次，方便查看
-      document.getElementById('pull').click()
-    }
+    setStatus('已登录', 'ok')
   } catch (error) {
     setStatus(error.message, 'err')
   }
@@ -320,9 +386,9 @@ document.getElementById('pull').addEventListener('click', async () => {
   if (!token) return setStatus('请先登录', 'err')
   setStatus('读取中…')
   try {
-    const res = await fetch('/api/account/pull', { headers: headers() })
+    const res = await apiFetch('/api/account/pull')
     const data = await res.json().catch(() => ({}))
-    if (!res.ok || !data.ok) throw new Error(data.error || '读取失败')
+    if (!res.ok || !data.ok) throw new Error(data.message || data.error || '读取失败')
     render(data)
     setStatus('已读取 · ' + new Date(data.updatedAt).toLocaleString(), 'ok')
   } catch (error) {
@@ -349,7 +415,7 @@ document.getElementById('file').addEventListener('change', async (event) => {
 
   setStatus('上传中…')
   try {
-    const data = await post('/api/account/push', { payload })
+    const data = await apiPost('/api/account/push', { payload })
     current = { ...current, payload, updatedAt: data.updatedAt }
     render({ ...current, username: current?.username || userInput.value })
     setStatus('已上传 · ' + new Date(data.updatedAt).toLocaleString(), 'ok')
@@ -371,12 +437,30 @@ document.getElementById('download').addEventListener('click', () => {
 })
 
 document.getElementById('logout').addEventListener('click', () => {
+  const rt = refreshToken
   token = ''
+  refreshToken = ''
   current = null
-  sessionStorage.removeItem('cw_account_token')
+  localStorage.removeItem('cw_access')
+  localStorage.removeItem('cw_refresh')
+  localStorage.removeItem('cw_user')
   card.classList.remove('on')
+  if (rt) {
+    fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: rt })
+    }).catch(() => {})
+  }
   setStatus('已退出登录')
 })
+
+if (token) {
+  document.getElementById('who').textContent = localStorage.getItem('cw_user') || '—'
+  card.classList.add('on')
+  loadMember()
+  loadProfile()
+}
 </script>
 </body>
 </html>

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.core.DEFAULT_SYNC_SERVER
+import com.wc.cwtrainer.core.AccountStore
 import com.wc.cwtrainer.core.MemberClient
 import com.wc.cwtrainer.ui.Amber
 import com.wc.cwtrainer.ui.Bg
@@ -72,7 +73,7 @@ fun MemberScreen(app: AppState, onBack: () -> Unit, onOpenAccount: () -> Unit) {
     val context = LocalContext.current
     val accountSp = remember { context.getSharedPreferences(ACCOUNT_PREFS, Context.MODE_PRIVATE) }
     val server = accountSp.getString("server", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_SYNC_SERVER
-    val token = accountSp.getString("token", "") ?: ""
+    var token by remember { mutableStateOf(accountSp.getString("token", "") ?: "") }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -90,6 +91,9 @@ fun MemberScreen(app: AppState, onBack: () -> Unit, onOpenAccount: () -> Unit) {
         }
         scope.launch {
             busy = true
+            if (token.isNotBlank()) {
+                AccountStore.ensureFresh(context, server).onSuccess { token = it.accessToken }
+            }
             MemberClient.config(server)
                 .onSuccess { cfg ->
                     var until = member.memberUntil
@@ -217,6 +221,13 @@ fun MemberScreen(app: AppState, onBack: () -> Unit, onOpenAccount: () -> Unit) {
                         onClick = {
                             scope.launch {
                                 busy = true
+                                val fresh = AccountStore.ensureFresh(context, server).getOrElse {
+                                    status = "登录已过期：${it.message}"
+                                    statusOk = false
+                                    busy = false
+                                    return@launch
+                                }
+                                token = fresh.accessToken
                                 MemberClient.redeem(server, token, redeemCode)
                                     .onSuccess { until ->
                                         member.save(member.enabled, member.price, until)
@@ -271,6 +282,13 @@ fun MemberScreen(app: AppState, onBack: () -> Unit, onOpenAccount: () -> Unit) {
                     }
                     scope.launch {
                         busy = true
+                        val fresh = AccountStore.ensureFresh(context, server).getOrElse {
+                            status = "登录已过期：${it.message}"
+                            statusOk = false
+                            busy = false
+                            return@launch
+                        }
+                        token = fresh.accessToken
                         MemberClient.checkout(server, token)
                             .onSuccess {
                                 status = "下单成功，请按提示完成支付"
