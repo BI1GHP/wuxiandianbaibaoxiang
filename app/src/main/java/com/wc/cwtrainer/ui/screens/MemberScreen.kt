@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
+import com.wc.cwtrainer.core.DEFAULT_SYNC_SERVER
 import com.wc.cwtrainer.core.MemberClient
 import com.wc.cwtrainer.ui.Amber
 import com.wc.cwtrainer.ui.Bg
@@ -70,7 +71,7 @@ private fun formatDate(ms: Long): String =
 fun MemberScreen(app: AppState, onBack: () -> Unit, onOpenAccount: () -> Unit) {
     val context = LocalContext.current
     val accountSp = remember { context.getSharedPreferences(ACCOUNT_PREFS, Context.MODE_PRIVATE) }
-    val server = accountSp.getString("server", "") ?: ""
+    val server = accountSp.getString("server", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_SYNC_SERVER
     val token = accountSp.getString("token", "") ?: ""
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }

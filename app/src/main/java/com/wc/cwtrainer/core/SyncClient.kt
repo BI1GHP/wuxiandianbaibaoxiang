@@ -9,6 +9,11 @@ import java.net.URL
 data class SyncSnapshot(val payload: String, val updatedAt: Long)
 
 /**
+ * 默认同步服务器：用户未填写时使用，可在 App 内改成自建地址。
+ */
+const val DEFAULT_SYNC_SERVER = "http://103.236.93.96:8790"
+
+/**
  * 网页端进度同步客户端：只搬运备份 JSON，不涉及账号。
  * 服务器地址与同步码由用户自行填写（局域网或自建服务）。
  */

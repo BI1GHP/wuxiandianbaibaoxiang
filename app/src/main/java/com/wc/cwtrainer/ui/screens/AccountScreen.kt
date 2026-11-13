@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.core.AccountClient
 import com.wc.cwtrainer.core.Backup
+import com.wc.cwtrainer.core.DEFAULT_SYNC_SERVER
 import com.wc.cwtrainer.core.skinOf
 import com.wc.cwtrainer.core.trainingPoints
 import com.wc.cwtrainer.ui.Amber
@@ -83,7 +84,11 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
     // 服务器地址默认沿用进度同步里填过的同一台服务
     val syncSp = remember { context.getSharedPreferences("wc_sync", Context.MODE_PRIVATE) }
     var server by remember {
-        mutableStateOf(sp.getString("server", null) ?: syncSp.getString("server", "") ?: "")
+        mutableStateOf(
+            sp.getString("server", null)?.takeIf { it.isNotBlank() }
+                ?: syncSp.getString("server", null)?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_SYNC_SERVER
+        )
     }
     var username by remember { mutableStateOf(sp.getString("username", "") ?: "") }
     var password by remember { mutableStateOf("") }

@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.core.Backup
+import com.wc.cwtrainer.core.DEFAULT_SYNC_SERVER
 import com.wc.cwtrainer.core.SyncClient
 import com.wc.cwtrainer.core.skinOf
 import com.wc.cwtrainer.core.trainingPoints
@@ -77,7 +78,9 @@ fun SyncScreen(app: AppState, onBack: () -> Unit) {
     val context = LocalContext.current
     val sp = remember { context.getSharedPreferences(SYNC_PREFS, Context.MODE_PRIVATE) }
     var code by remember { mutableStateOf(sp.getString("code", null) ?: newCode()) }
-    var server by remember { mutableStateOf(sp.getString("server", null) ?: "") }
+    var server by remember {
+        mutableStateOf(sp.getString("server", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_SYNC_SERVER)
+    }
     var token by remember { mutableStateOf(sp.getString("token", null) ?: "") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
