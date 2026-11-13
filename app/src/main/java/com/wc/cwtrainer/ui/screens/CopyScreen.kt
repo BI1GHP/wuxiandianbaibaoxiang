@@ -82,6 +82,7 @@ import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
 import com.wc.cwtrainer.ui.WpmAdjuster
+import com.wc.cwtrainer.ui.digitHighlighted
 import com.wc.cwtrainer.core.UiSounds
 import kotlinx.coroutines.delay
 
@@ -726,6 +727,7 @@ private val TapePaper = Color(0xFFFBF6E9)
 private val TapeLine = Color(0xFFE2D7C1)
 private val TapeHole = Color(0xFFD9CDB8)
 private val TapeInk = Color(0xFF2B3A33)
+private val TapeDigit = Color(0xFF9A5B00)
 
 /**
  * 纸带：报文像电传打字机一样逐字打印出来。
@@ -774,7 +776,7 @@ private fun PaperTape(text: String) {
         ) {
             Row {
                 Text(
-                    text = text.take(reveal),
+                    text = digitHighlighted(text.take(reveal), TapeInk, TapeDigit),
                     color = TapeInk,
                     fontSize = 20.sp,
                     fontFamily = FontFamily.Monospace,

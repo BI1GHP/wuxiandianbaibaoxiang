@@ -31,8 +31,8 @@ android {
         applicationId = "com.wc.cwtrainer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 308
-        versionName = "V3.0.8"
+        versionCode = 309
+        versionName = "V3.0.9"
     }
 
     signingConfigs {

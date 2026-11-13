@@ -59,6 +59,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,6 +71,7 @@ import com.wc.cwtrainer.core.ContestGen
 import com.wc.cwtrainer.core.ContestMode
 import com.wc.cwtrainer.core.ContestQso
 import com.wc.cwtrainer.core.VoiceSpec
+import com.wc.cwtrainer.ui.DigitHighlightTransformation
 import com.wc.cwtrainer.ui.KeepScreenOn
 import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlin.math.cos
@@ -1045,7 +1047,7 @@ private fun CopyPanel(
                 Text("呼号  CALL", color = LedAmber.copy(alpha = 0.95f),
                     fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
-                MetalField(value = callIn, onValueChange = onCall, fontSize = 18)
+                MetalField(value = callIn, onValueChange = onCall, fontSize = 18, highlightDigits = true)
             }
             Column(Modifier.weight(1f)) {
                 Text("RST", color = LedAmber.copy(alpha = 0.95f),
@@ -1076,7 +1078,7 @@ private fun CopyPanel(
 @Composable
 private fun MetalField(
     value: TextFieldValue, onValueChange: (TextFieldValue) -> Unit,
-    fontSize: Int, placeholder: String? = null
+    fontSize: Int, placeholder: String? = null, highlightDigits: Boolean = false
 ) {
     BasicTextField(
         value = value, onValueChange = onValueChange,
@@ -1084,6 +1086,7 @@ private fun MetalField(
             fontFamily = FontFamily.Monospace, fontSize = fontSize.sp,
             fontWeight = FontWeight.Bold, color = LedGreen
         ),
+        visualTransformation = if (highlightDigits) DigitHighlightTransformation(LedGreen) else VisualTransformation.None,
         singleLine = true, cursorBrush = SolidColor(LedAmber),
         decorationBox = { inner ->
             Row(

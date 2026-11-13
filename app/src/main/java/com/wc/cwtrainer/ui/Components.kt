@@ -33,6 +33,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
@@ -475,4 +482,32 @@ fun KeepScreenOn(active: Boolean) {
         if (active) view.keepScreenOn = true
         onDispose { if (active) view.keepScreenOn = false }
     }
+}
+
+/**
+ * 呼号/代码显示：数字用琥珀色加粗、字母保持原色，避免数字 0 与字母 O 混淆。
+ * 用于抄收选项、呼号输入、复盘等需要逐字符辨认的位置。
+ */
+fun digitHighlighted(
+    text: String,
+    letterColor: Color,
+    digitColor: Color = Amber
+): AnnotatedString = buildAnnotatedString {
+    text.forEach { ch ->
+        val style = if (ch.isDigit()) {
+            SpanStyle(color = digitColor, fontWeight = FontWeight.Bold)
+        } else {
+            SpanStyle(color = letterColor)
+        }
+        withStyle(style) { append(ch) }
+    }
+}
+
+/** BasicTextField 用：把输入里的数字染成琥珀色，和字母 O 区分开 */
+class DigitHighlightTransformation(
+    private val letterColor: Color,
+    private val digitColor: Color = Amber
+) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText =
+        TransformedText(digitHighlighted(text.text, letterColor, digitColor), OffsetMapping.Identity)
 }

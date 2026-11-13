@@ -42,6 +42,7 @@ import com.wc.cwtrainer.core.ContestGen
 import com.wc.cwtrainer.core.PhoneticStyle
 import com.wc.cwtrainer.ui.Amber
 import com.wc.cwtrainer.ui.Bg
+import com.wc.cwtrainer.ui.digitHighlighted
 import com.wc.cwtrainer.ui.Green
 import com.wc.cwtrainer.ui.Line
 import com.wc.cwtrainer.ui.NameplateCard
@@ -483,7 +484,7 @@ private fun OptionCell(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = text,
+            text = digitHighlighted(text, fg),
             color = fg,
             fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
