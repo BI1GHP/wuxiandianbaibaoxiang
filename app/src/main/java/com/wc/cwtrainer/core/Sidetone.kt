@@ -1,5 +1,6 @@
 package com.wc.cwtrainer.core
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -9,7 +10,9 @@ import kotlin.math.max
 import kotlin.math.sin
 
 /** 发码时的侧音（实时通断，低延迟） */
-class Sidetone {
+class Sidetone(context: Context) {
+
+    private val appContext = context.applicationContext
 
     @Volatile
     var frequency: Double = 700.0
@@ -28,6 +31,7 @@ class Sidetone {
         synchronized(lock) {
             if (running) return
             running = true
+            AudioGate.acquire(appContext, TAG) { stop() }
             thread = Thread { loop() }.also {
                 it.isDaemon = true
                 it.priority = Thread.MAX_PRIORITY
@@ -43,6 +47,7 @@ class Sidetone {
             thread = null
         }
         gated = false
+        AudioGate.release(TAG)
     }
 
     private fun loop() {
@@ -96,5 +101,9 @@ class Sidetone {
             } catch (_: Exception) {
             }
         }
+    }
+
+    private companion object {
+        const val TAG = "sidetone"
     }
 }

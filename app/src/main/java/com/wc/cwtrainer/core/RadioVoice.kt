@@ -64,6 +64,7 @@ class RadioVoice(context: Context, private val speaker: Speaker) {
     private suspend fun playPcm(pcm: ShortArray, volume: Float) {
         stopTrack()
         val myToken = ++token
+        AudioGate.acquire(appContext, TAG) { stop() }
         val t = try {
             val minBuf = AudioTrack.getMinBufferSize(
                 RadioDsp.SR,
@@ -110,6 +111,7 @@ class RadioVoice(context: Context, private val speaker: Speaker) {
             if (token == myToken) {
                 isPlaying = false
                 stopTrack()
+                AudioGate.release(TAG)
             }
         }
     }
@@ -124,6 +126,11 @@ class RadioVoice(context: Context, private val speaker: Speaker) {
         token++
         stopTrack()
         isPlaying = false
+        AudioGate.release(TAG)
+    }
+
+    private companion object {
+        const val TAG = "radio_voice"
     }
 }
 

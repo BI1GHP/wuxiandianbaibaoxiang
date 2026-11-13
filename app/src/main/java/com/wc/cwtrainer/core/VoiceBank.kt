@@ -28,7 +28,8 @@ import kotlin.math.roundToInt
  */
 class VoiceBank(context: Context) {
 
-    private val assets = context.applicationContext.assets
+    private val appContext = context.applicationContext
+    private val assets = appContext.assets
     private val banks = HashMap<String, Map<String, String>>()
     private val cache = HashMap<String, ShortArray>()
 
@@ -262,6 +263,7 @@ class VoiceBank(context: Context) {
     private suspend fun playPcm(pcm: ShortArray, volume: Float) {
         stopTrack()
         val myToken = ++token
+        AudioGate.acquire(appContext, TAG) { stop() }
         val t = try {
             val minBuf = AudioTrack.getMinBufferSize(
                 SR, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -307,6 +309,7 @@ class VoiceBank(context: Context) {
             if (token == myToken) {
                 isPlaying = false
                 stopTrack()
+                AudioGate.release(TAG)
             }
         }
     }
@@ -321,6 +324,7 @@ class VoiceBank(context: Context) {
         token++
         stopTrack()
         isPlaying = false
+        AudioGate.release(TAG)
     }
 
     private companion object {
@@ -328,5 +332,6 @@ class VoiceBank(context: Context) {
         const val SR = 24000
         const val SRC_SR = 24000
         const val FALLBACK = "en-US"
+        const val TAG = "voice_bank"
     }
 }

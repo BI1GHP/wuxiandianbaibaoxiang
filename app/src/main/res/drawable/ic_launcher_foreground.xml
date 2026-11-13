@@ -1,4 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@drawable/ic_launcher_fg"
-    android:gravity="fill" />
+<!--
+  应用图标前景：S 表指针 + 点划。
+  108dp 画布，核心图形收在 66dp 安全区内（半径 33）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 表盘面 -->
+    <path
+        android:fillColor="#FFF4EFE2"
+        android:pathData="M54,28 A23,23 0 1,1 53.9,28 Z" />
+
+    <!-- 表圈 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,29.2 A21.8,21.8 0 1,1 53.9,29.2 Z"
+        android:strokeColor="#FF12161C"
+        android:strokeWidth="1.8" />
+
+    <!-- 刻度 -->
+    <path
+        android:pathData="M39.7,42.8 L37.1,41.3 M43.4,38.4 L41.5,36.1 M48.4,35.5 L47.3,32.7 M54,34.5 L54,31.5 M59.6,35.5 L60.7,32.7 M64.6,38.4 L66.5,36.1 M68.3,42.8 L70.9,41.3"
+        android:strokeColor="#FF12161C"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.7" />
+
+    <!-- 指针 -->
+    <path
+        android:pathData="M54,54 L68,37"
+        android:strokeColor="#FFC7503F"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.2" />
+
+    <!-- 轴心 -->
+    <path
+        android:fillColor="#FF12161C"
+        android:pathData="M54,51.6 A2.4,2.4 0 1,1 53.9,51.6 Z" />
+
+    <!-- 点划：·—· -->
+    <path
+        android:fillColor="#FFFFC857"
+        android:pathData="M46,77 A2,2 0 1,1 45.9,77 Z M64,77 A2,2 0 1,1 63.9,77 Z" />
+    <path
+        android:pathData="M50.8,79 L59.2,79"
+        android:strokeColor="#FFFFC857"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.6" />
+</vector>

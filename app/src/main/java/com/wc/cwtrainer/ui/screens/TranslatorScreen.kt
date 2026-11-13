@@ -19,11 +19,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -56,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.wc.cwtrainer.AppState
+import com.wc.cwtrainer.core.AudioGate
 import com.wc.cwtrainer.core.Fist
 import com.wc.cwtrainer.core.Morse
 import com.wc.cwtrainer.core.MorseDecoder
@@ -69,6 +72,7 @@ import com.wc.cwtrainer.ui.Line
 import com.wc.cwtrainer.ui.Red
 import com.wc.cwtrainer.ui.ScreenHeader
 import com.wc.cwtrainer.ui.Surface1
+import com.wc.cwtrainer.ui.Bg
 import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
@@ -88,8 +92,8 @@ fun TranslatorScreen(app: AppState, onBack: () -> Unit) {
         onDispose { app.sidetone.stop() }
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF0B1220))) {
-        ScreenHeader("CW 翻译器", onBack)
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        ScreenHeader("CW 翻译器", onBack, subtitle = "TRANSLATOR · CW")
         Spacer(Modifier.height(8.dp))
 
         Row(
@@ -117,14 +121,23 @@ fun TranslatorScreen(app: AppState, onBack: () -> Unit) {
 @Composable
 private fun TabBtn(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        modifier = modifier.height(40.dp)
+        modifier = modifier
+            .heightIn(min = 40.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) Amber.copy(alpha = 0.2f) else Color.Transparent)
             .border(1.dp, if (selected) Amber.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(10.dp))
-            .clickable { onClick() },
+            .clickable { onClick() }
+            .padding(vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text = label, color = if (selected) Amber else TextDim, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(
+            text = label,
+            color = if (selected) Amber else TextDim,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -216,10 +229,12 @@ private fun DecodeBlock(app: AppState) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    Modifier.size(44.dp).clip(CircleShape)
+                    Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 44.dp)
+                        .clip(CircleShape)
                         .background(if (listening) Green.copy(alpha = 0.15f) else Surface2)
                         .border(2.dp, if (listening) Green.copy(alpha = 0.6f) else Line, CircleShape)
-                        .clickable { toggle() },
+                        .clickable { toggle() }
+                        .padding(8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(text = if (listening) "■" else "▶", color = if (listening) Green else Amber,
@@ -269,7 +284,7 @@ private fun DecodeBlock(app: AppState) {
 
         Column(
             modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF0A0D11)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
+                .background(Surface2).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("解码结果", color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
@@ -282,7 +297,7 @@ private fun DecodeBlock(app: AppState) {
             Spacer(Modifier.height(10.dp))
             Box(
                 modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF06080C))
+                    .background(Surface2)
                     .border(1.dp, Line, RoundedCornerShape(8.dp))
                     .padding(12.dp).verticalScroll(scrollState)
             ) {
@@ -323,8 +338,9 @@ private fun KeyBlock(app: AppState) {
     val decoder = remember { MorseDecoder(s.translatorWpm.toDouble(), trustInitialWpm = true) }
     val scrollState = rememberScrollState()
 
-    // —— 页面进入自动启动 SIDETONE ——
-    LaunchedEffect(Unit) {
+    // —— 页面进入自动启动 SIDETONE；被来电等打断后重新拉起侧音通道 ——
+    val interruption = AudioGate.interruption
+    LaunchedEffect(Unit, interruption) {
         app.audio.stop(); app.speaker.stop()
         app.sidetone.frequency = s.toneHz.toDouble()
         app.sidetone.volume = s.volume
@@ -426,7 +442,7 @@ private fun KeyBlock(app: AppState) {
             // 收报显示 + 清屏（置顶，吃掉所有剩余空间）
             Column(
                 modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF0A0D11)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
+                    .background(Surface2).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("实时解码", color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
@@ -442,7 +458,7 @@ private fun KeyBlock(app: AppState) {
                 Spacer(Modifier.height(8.dp))
                 Box(
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF06080C))
+                        .background(Surface2)
                         .border(1.dp, Line, RoundedCornerShape(8.dp))
                         .padding(12.dp).verticalScroll(scrollState)
                 ) {
@@ -555,7 +571,9 @@ private fun EncodeBlock(app: AppState) {
         val fist = Fist(wpm = s.translatorWpm.toDouble(), farnsworth = s.farnsworth.toDouble())
         app.audio.play(
             voices = listOf(VoiceSpec(text = txt, fist = fist, toneHz = s.toneHz.toDouble())),
-            volume = s.volume, noiseLevel = s.noiseLevel
+            volume = s.volume, noiseLevel = s.noiseLevel,
+            title = "CW 翻译器",
+            subtitle = "${s.translatorWpm} WPM"
         )
     }
 
@@ -594,7 +612,7 @@ private fun EncodeBlock(app: AppState) {
 
         Column(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF0A0D11)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
+                .background(Surface2).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(14.dp)
         ) {
             Text("CW 预览 · 点划", color = TextDim, fontSize = 11.sp, letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(8.dp))
@@ -614,7 +632,7 @@ private fun EncodeBlock(app: AppState) {
         Spacer(Modifier.height(16.dp))
 
         Box(
-            modifier = Modifier.fillMaxWidth().height(56.dp)
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(if (isPlaying) Red else Amber)
                 .clickable { if (isPlaying) app.audio.stop() else play() },

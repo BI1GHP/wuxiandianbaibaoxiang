@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,6 +57,7 @@ import com.wc.cwtrainer.ui.Amber
 import com.wc.cwtrainer.ui.Bg
 import com.wc.cwtrainer.ui.Green
 import com.wc.cwtrainer.ui.Line
+import com.wc.cwtrainer.ui.NameplateCard
 import com.wc.cwtrainer.ui.Pill
 import com.wc.cwtrainer.ui.Red
 import com.wc.cwtrainer.ui.Surface1
@@ -143,8 +146,13 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
     }
 
     fun newQuestion() {
-        val pool = Morse.letters + Morse.digits
-        val ans = pool.random()
+        val due = if (tab == 3) app.srs.dueChars() else emptyList()
+        val pool = due.ifEmpty { Morse.letters + Morse.digits }
+        var ans = pool.random()
+        // 尽量不连续出同一个字符
+        if (pool.size > 1 && ans == question.answer) {
+            ans = pool.filter { it != ans }.random()
+        }
         val options = (pool.filter { it != ans }.shuffled().take(3) + ans).shuffled()
         question = QuizQuestion(ans, options)
         picked = null
@@ -156,7 +164,8 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
         picked = c
         val ok = c == question.answer
         feedback = ok
-        app.stats.addLearn(ok)
+        app.stats.addLearn(ok, question.answer)
+        if (tab == 3) app.srs.record(question.answer, ok)
         if (ok) {
             scope.launch {
                 delay(700)
@@ -175,35 +184,53 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
         }
     }
     LaunchedEffect(question, tab) {
-        if (tab == 1) playChar(question.answer)
+        if (tab == 1 || tab == 3) playChar(question.answer)
     }
 
     Column(Modifier.fillMaxSize().background(Bg)) {
-        // 顶部
+        // 顶部：铭牌页头
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            Text(
-                text = "‹ 返回",
-                color = TextDim,
-                fontSize = 14.sp,
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onBack() }
-                    .padding(horizontal = 6.dp, vertical = 6.dp)
-            )
-            Text(
-                text = "背码训练",
-                color = TextMain,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 6.dp)
-            )
-            Spacer(Modifier.weight(1f))
-            val correctRate = if (app.stats.learnTotal == 0) "—" else
-                String.format("%.0f%%", app.stats.learnCorrect.toFloat() / app.stats.learnTotal * 100f)
-            ModeChip("正确率 $correctRate", "${app.stats.learnTotal} 题")
+            NameplateCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "‹",
+                        color = TextDim,
+                        fontSize = 22.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onBack() }
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 4.dp)
+                    ) {
+                        Text(
+                            text = "背码训练",
+                            color = TextMain,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "LEARN · KEY",
+                            color = TextDim,
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.6.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    val correctRate = if (app.stats.learnTotal == 0) "—" else
+                        String.format("%.0f%%", app.stats.learnCorrect.toFloat() / app.stats.learnTotal * 100f)
+                    ModeChip("正确率 $correctRate", "${app.stats.learnTotal} 题")
+                }
+            }
         }
 
         // Tab 切换
@@ -214,6 +241,7 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
             Pill("码表速查", tab == 0) { tab = 0 }
             Pill("听音辨码", tab == 1) { tab = 1 }
             Pill("看码辨字", tab == 2) { tab = 2 }
+            Pill("今日复习 ${app.srs.dueCount()}", tab == 3) { tab = 3 }
         }
 
         // 码速调节（独立行，避免撑高标题行产生留白）
@@ -297,7 +325,7 @@ private fun DailyAudioCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(42.dp)
+                    .defaultMinSize(minWidth = 42.dp, minHeight = 42.dp)
                     .clip(CircleShape)
                     .background(Amber.copy(alpha = 0.16f))
                     .border(1.dp, Amber.copy(alpha = 0.55f), CircleShape)
@@ -475,7 +503,11 @@ private fun QuizContent(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = if (tab == 1) "听音辨码" else "看码辨字",
+                text = when (tab) {
+                    1 -> "听音辨码"
+                    2 -> "看码辨字"
+                    else -> "今日复习"
+                },
                 color = TextDim, fontSize = 12.sp, letterSpacing = 2.sp
             )
             Spacer(Modifier.weight(1f))
@@ -487,7 +519,7 @@ private fun QuizContent(
 
         Spacer(Modifier.height(22.dp))
 
-        if (tab == 1) {
+        if (tab == 1 || tab == 3) {
             // 听音：大播放按钮
             Box(
                 modifier = Modifier
@@ -542,10 +574,11 @@ private fun QuizContent(
         }
 
         // 背码建议：听音辨码时只记声音，不记点划形态
-        if (tab == 1) {
+        if (tab == 1 || tab == 3) {
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "建议只背声音，不要背 “·” 和 “—” 的形态",
+                text = if (tab == 3) "按遗忘曲线安排：答对间隔逐次拉长，答错今天再练"
+                else "建议只背声音，不要背 “·” 和 “—” 的形态",
                 color = TextDim, fontSize = 11.sp, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -612,7 +645,7 @@ private fun QuizOption(
     }
     Box(
         modifier = modifier
-            .height(62.dp)
+            .heightIn(min = 62.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .border(1.dp, border, RoundedCornerShape(12.dp))

@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CW练考通 · 教练看板</title>
+<style>
+  :root {
+    --bg: #12161c;
+    --surface: #1e242d;
+    --surface2: #0c1015;
+    --line: #2a3240;
+    --amber: #ffc857;
+    --green: #3ddc97;
+    --cyan: #00d4ff;
+    --red: #ff5555;
+    --text: #e6edf7;
+    --dim: #7a8599;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(1200px 600px at 50% -10%, #1b2530, var(--bg) 60%);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 28px 18px 56px;
+  }
+  .wrap { width: 100%; max-width: 980px; }
+  .plate {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 18px;
+    position: relative;
+  }
+  .plate::before, .plate::after {
+    content: "";
+    position: absolute;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #3a4350;
+    top: 10px;
+  }
+  .plate::before { left: 10px; }
+  .plate::after { right: 10px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .led {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 8px rgba(0, 212, 255, .8);
+  }
+  h1 { margin: 8px 0 2px; font-size: 22px; letter-spacing: 2px; }
+  .sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--amber);
+    letter-spacing: 1px;
+  }
+  .hint { color: var(--dim); font-size: 12px; line-height: 1.7; margin: 14px 0 0; }
+  label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--dim);
+    margin: 18px 0 6px;
+  }
+  textarea, input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 13px;
+    outline: none;
+  }
+  textarea {
+    min-height: 92px;
+    resize: vertical;
+    font-family: var(--mono);
+    letter-spacing: 1px;
+    line-height: 1.6;
+  }
+  input { font-family: var(--mono); }
+  textarea:focus, input:focus { border-color: var(--amber); }
+  .row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  button {
+    flex: 1;
+    min-width: 120px;
+    border: 1px solid var(--line);
+    background: var(--surface2);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 11px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button.primary {
+    background: var(--amber);
+    border-color: var(--amber);
+    color: #1a1200;
+    font-weight: 700;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  .status { margin-top: 10px; font-size: 11px; line-height: 1.6; color: var(--dim); min-height: 16px; }
+  .status.err { color: var(--red); }
+  .status.ok { color: var(--green); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin: 16px 0 0;
+    padding-top: 14px;
+    border-top: 1px dashed #3a4350;
+  }
+  .stat { text-align: center; }
+  .stat b { display: block; font-family: var(--mono); font-size: 22px; color: var(--amber); }
+  .stat span { font-size: 10px; color: var(--dim); }
+
+  .section-title {
+    margin: 22px 0 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--dim);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 12px;
+  }
+  .member {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    position: relative;
+  }
+  .member.active { border-color: rgba(61, 220, 151, .55); }
+  .member .head { display: flex; align-items: baseline; gap: 8px; }
+  .member .call {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--amber);
+  }
+  .member .tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--line);
+    color: var(--dim);
+  }
+  .member .code {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: 1px;
+  }
+  .member .meta {
+    margin-top: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dim);
+  }
+  .member .nums {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .member .nums div b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--text);
+  }
+  .member .nums div span { font-size: 9px; color: var(--dim); }
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 38px;
+    margin-top: 12px;
+  }
+  .bars i {
+    flex: 1;
+    background: var(--line);
+    border-radius: 3px 3px 0 0;
+    min-height: 2px;
+    display: block;
+  }
+  .bars i.on { background: linear-gradient(180deg, var(--cyan), #0e6b62); }
+  .days {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .days span {
+    flex: 1;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 8px;
+    color: var(--dim);
+  }
+  .weak { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .weak span {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 7px;
+    border-radius: 5px;
+    background: rgba(255, 85, 85, .1);
+    border: 1px solid rgba(255, 85, 85, .35);
+    color: #ff9a9a;
+  }
+  .empty {
+    padding: 26px 12px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 12px;
+    line-height: 1.8;
+    border: 1px dashed var(--line);
+    border-radius: 14px;
+  }
+  .missing { margin-top: 10px; font-size: 11px; color: #ff9a9a; line-height: 1.7; }
+  .foot {
+    margin-top: 26px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: #4d5868;
+    letter-spacing: 1px;
+  }
+  .foot a { color: var(--cyan); text-decoration: none; }
+  @media (max-width: 640px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="plate">
+    <div class="eyebrow"><span class="led"></span>MODEL WC-2025 · COACH CONSOLE</div>
+    <h1>教练看板</h1>
+    <div class="sub">CLASS ROSTER · 学员进度</div>
+    <p class="hint">
+      让学员在 App「设置 → 进度同步」里把同步码发给你，一行一个填到下面即可汇总。
+      看板只读取服务器上已有的同步记录并展示摘要，不上传、不修改学员数据。
+    </p>
+
+    <label for="codes">学员同步码 SYNC CODES</label>
+    <textarea id="codes" placeholder="K7M2QX&#10;AB12CD&#10;（也支持用逗号或空格分隔）" spellcheck="false"></textarea>
+
+    <label for="token">教练口令 COACH TOKEN（服务器未启用可留空）</label>
+    <input id="token" type="password" placeholder="可选" autocomplete="off" />
+
+    <div class="row">
+      <button id="refresh" class="primary">刷新看板</button>
+      <button id="clear">清空名单</button>
+    </div>
+    <div id="status" class="status"></div>
+
+    <div class="stats">
+      <div class="stat"><b id="s-members">0</b><span>学员</span></div>
+      <div class="stat"><b id="s-active">0</b><span>今日活跃</span></div>
+      <div class="stat"><b id="s-week">0</b><span>7 日训练</span></div>
+      <div class="stat"><b id="s-streak">0</b><span>平均连续天数</span></div>
+    </div>
+  </header>
+
+  <div class="section-title">学员进度 MEMBERS</div>
+  <div id="grid" class="grid">
+    <div class="empty">还没有学员。把同步码填到上方，点「刷新看板」。</div>
+  </div>
+  <div id="missing" class="missing"></div>
+
+  <div class="foot">CW练考通 · 本地优先 · <a href="/">返回进度同步页</a></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const LS_CODES = 'cw_coach_roster'
+const LS_TOKEN = 'cw_coach_token'
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ))
+}
+
+function parseCodes(text) {
+  return [...new Set(
+    String(text || '')
+      .toUpperCase()
+      .split(/[\s,，;；]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  )]
+}
+
+function setStatus(text, kind) {
+  const el = $('status')
+  el.textContent = text || ''
+  el.className = 'status' + (kind ? ' ' + kind : '')
+}
+
+function ago(ts) {
+  if (!ts) return '从未同步'
+  const diff = Date.now() - ts
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return Math.floor(diff / 60_000) + ' 分钟前'
+  if (diff < 86_400_000) return Math.floor(diff / 3_600_000) + ' 小时前'
+  return Math.floor(diff / 86_400_000) + ' 天前'
+}
+
+function pct(v) {
+  return Math.round(Number(v || 0) * 100) + '%'
+}
+
+function render(data) {
+  const members = data.members || []
+  const missing = data.missing || []
+  const today = members.filter((m) => {
+    const last = m.days && m.days[m.days.length - 1]
+    return last && last.total > 0
+  }).length
+  const week = members.reduce((sum, m) => sum + Number(m.weekTotal || 0), 0)
+  const avgStreak = members.length
+    ? (members.reduce((sum, m) => sum + Number(m.streak || 0), 0) / members.length)
+    : 0
+
+  $('s-members').textContent = members.length
+  $('s-active').textContent = today
+  $('s-week').textContent = week
+  $('s-streak').textContent = avgStreak.toFixed(1)
+
+  const grid = $('grid')
+  if (!members.length) {
+    grid.innerHTML = '<div class="empty">没有读到可用的同步码。确认学员已在 App 里上传过进度，且服务器地址填写正确。</div>'
+  } else {
+    grid.innerHTML = members.map((m) => {
+      const days = m.days || []
+      const max = Math.max(1, ...days.map((d) => Number(d.total || 0)))
+      const bars = days.map((d) => {
+        const h = Math.max(2, Math.round((Number(d.total || 0) / max) * 38))
+        return `<i class="${d.total > 0 ? 'on' : ''}" style="height:${h}px" title="${esc(d.date)} · ${d.total} 次"></i>`
+      }).join('')
+      const labels = days.map((d) => `<span>${esc(String(d.date || '').slice(8))}</span>`).join('')
+      const weak = (m.weak || []).length
+        ? `<div class="weak">${m.weak.map((w) => `<span>${esc(w.ch)} ×${w.miss}</span>`).join('')}</div>`
+        : ''
+      const active = days.length && days[days.length - 1].total > 0
+      const opClass = m.opClass && m.opClass !== 'NONE' ? m.opClass + ' 类' : '未考证'
+      return `
+        <article class="member${active ? ' active' : ''}">
+          <div class="head">
+            <span class="call">${esc(m.callsign)}</span>
+            <span class="tag">${esc(opClass)}</span>
+            <span class="code">${esc(m.code)}</span>
+          </div>
+          <div class="meta">同步于 ${esc(ago(m.updatedAt))} · 连续 ${m.streak} 天${m.version ? ' · v' + esc(m.version) : ''}</div>
+          <div class="nums">
+            <div><b>${m.learnTotal}</b><span>背码题数</span></div>
+            <div><b>${pct(m.copyBest)}</b><span>听抄最佳</span></div>
+            <div><b>${m.contestBest}/3</b><span>赛事最佳</span></div>
+          </div>
+          <div class="bars">${bars}</div>
+          <div class="days">${labels}</div>
+          ${weak}
+        </article>`
+    }).join('')
+  }
+
+  const miss = $('missing')
+  if (missing.length) {
+    miss.textContent = '未找到：' + missing.join('、') + '（可能尚未上传，或已超过服务器保留期）'
+  } else {
+    miss.textContent = ''
+  }
+}
+
+async function refresh() {
+  const codes = parseCodes($('codes').value)
+  localStorage.setItem(LS_CODES, JSON.stringify(codes))
+  localStorage.setItem(LS_TOKEN, $('token').value)
+
+  if (!codes.length) {
+    setStatus('请先填写至少一个同步码。', 'err')
+    return
+  }
+
+  const btn = $('refresh')
+  btn.disabled = true
+  setStatus('读取中…')
+  try {
+    const headers = { 'content-type': 'application/json' }
+    const token = $('token').value.trim()
+    if (token) headers['x-coach-token'] = token
+    const res = await fetch('/api/coach/summary', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ codes })
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || ('HTTP ' + res.status))
+    }
+    render(data)
+    setStatus(`已汇总 ${data.members.length} 名学员` + (data.missing.length ? `，${data.missing.length} 个同步码未找到` : ''), 'ok')
+  } catch (e) {
+    setStatus('读取失败：' + e.message, 'err')
+  } finally {
+    btn.disabled = false
+  }
+}
+
+// —— 恢复上次名单 ——
+try {
+  const saved = JSON.parse(localStorage.getItem(LS_CODES) || '[]')
+  if (Array.isArray(saved) && saved.length) {
+    $('codes').value = saved.join('\n')
+    $('token').value = localStorage.getItem(LS_TOKEN) || ''
+    refresh()
+  }
+} catch { /* 忽略损坏的本地缓存 */ }
+
+$('refresh').addEventListener('click', refresh)
+$('clear').addEventListener('click', () => {
+  $('codes').value = ''
+  localStorage.removeItem(LS_CODES)
+  $('grid').innerHTML = '<div class="empty">还没有学员。把同步码填到上方，点「刷新看板」。</div>'
+  $('missing').textContent = ''
+  $('s-members').textContent = '0'
+  $('s-active').textContent = '0'
+  $('s-week').textContent = '0'
+  $('s-streak').textContent = '0'
+  setStatus('')
+})
+$('codes').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) refresh()
+})
+
+// 每 60 秒自动刷新，看板可长时间开着
+setInterval(() => {
+  if (parseCodes($('codes').value).length && !$('refresh').disabled) refresh()
+}, 60_000)
+</script>
+</body>
+</html>

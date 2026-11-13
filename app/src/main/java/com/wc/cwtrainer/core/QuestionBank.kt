@@ -3,7 +3,7 @@ package com.wc.cwtrainer.core
 import android.content.Context
 import org.json.JSONObject
 
-/** 官方题库（2025 年 B/C 类），从 assets/question_bank_2025.json 加载 */
+/** 官方题库（2025 年 A/B/C 类），从 assets/question_bank_2025.json 加载 */
 object QuestionBank {
 
     private val cache = mutableMapOf<ExamLevel, List<Question>>()

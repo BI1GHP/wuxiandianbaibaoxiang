@@ -1,5 +1,10 @@
 package com.wc.cwtrainer.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,15 +14,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,8 +38,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.sp
 
 // —— 启动图配色（深海军蓝渐变 + 琥珀描边）——
@@ -88,8 +102,8 @@ fun SplashScreen() {
                 fontSize = 13.sp,
                 letterSpacing = 1.2.sp
             )
-            Spacer(Modifier.height(34.dp))
-            Badges()
+            Spacer(Modifier.height(30.dp))
+            SelfTest()
             Spacer(Modifier.weight(0.16f))
             Spacer(Modifier.height(18.dp))
         }
@@ -201,25 +215,98 @@ private fun Title() {
     }
 }
 
+/**
+ * 开机自检：模拟电台上电流程，四行自检项依次点亮，底部进度条同步推进。
+ * 约 1.1 秒完成，与冷启动 2 秒的品牌展示衔接。
+ */
 @Composable
-private fun Badges() {
-    val items = listOf("听", "抄", "背", "赛事模拟", "C/B类题库", "模拟考试")
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        items.forEach { label ->
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0x1AFFFFFF))
-                    .border(1.dp, Color(0x59FFFFFF), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 9.dp, vertical = 5.dp)
+private fun SelfTest() {
+    val items = listOf(
+        "PWR" to "13.8V",
+        "VFO" to "7.030 MHz",
+        "KEY" to "20 WPM",
+        "BANK" to "A · B · C"
+    )
+    var step by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (step < items.size) {
+            delay(230)
+            step += 1
+        }
+    }
+    val progress by animateFloatAsState(
+        targetValue = step / items.size.toFloat(),
+        animationSpec = tween(260),
+        label = "bootProgress"
+    )
+
+    Column(modifier = Modifier.width(252.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "SELF TEST",
+                color = SplashAmber.copy(alpha = 0.9f),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 3.sp
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "${(progress * 100).toInt()}%",
+                color = Color(0x99EAF2FF),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        items.forEachIndexed { index, (key, value) ->
+            val shown = step > index
+            AnimatedVisibility(
+                visible = shown,
+                enter = fadeIn(tween(160)) + slideInVertically(tween(160)) { it / 2 }
             ) {
-                Text(
-                    text = label,
-                    color = Color(0xFFE8F1FF),
-                    fontSize = 10.sp,
-                    letterSpacing = 0.5.sp
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = key,
+                        color = Color(0x99EAF2FF),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.width(44.dp)
+                    )
+                    Text(
+                        text = value,
+                        color = SplashInk,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "OK",
+                        color = Color(0xFF3DDC97),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(Color(0x1FFFFFFF))
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(progress)
+                    .height(2.dp)
+                    .background(SplashAmber)
+            )
         }
     }
 }

@@ -1,6 +1,8 @@
 package com.wc.cwtrainer.ui.screens
 
 import android.os.SystemClock
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -18,9 +20,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,9 +33,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -47,19 +53,24 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
+import com.wc.cwtrainer.core.AudioGate
 import com.wc.cwtrainer.core.ContestCheck
 import com.wc.cwtrainer.core.ContestGen
 import com.wc.cwtrainer.core.ContestMode
+import com.wc.cwtrainer.core.ContestQso
 import com.wc.cwtrainer.core.VoiceSpec
+import com.wc.cwtrainer.ui.KeepScreenOn
 import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -116,6 +127,25 @@ private fun buildHeatLut(levels: Int = 96): Array<Color> = Array(levels) { idx -
 @Composable
 fun ContestScreen(app: AppState, onBack: () -> Unit) {
     val s = app.prefs.data
+    val context = LocalContext.current
+    // 本次进入赛事页的时间点：复盘 / 导出只统计这一次模拟赛
+    val sessionStart = remember { System.currentTimeMillis() }
+    var showReview by remember { mutableStateOf(false) }
+    var exportMsg by remember { mutableStateOf<String?>(null) }
+
+    val adifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            val text = app.contestLog.toAdif(app.prefs.data.callsign, sessionStart)
+            val ok = runCatching {
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(text.toByteArray(Charsets.UTF_8))
+                } ?: error("无法写入文件")
+            }.isSuccess
+            exportMsg = if (ok) "ADIF 已导出" else "导出失败，请重试"
+        }
+    }
 
     var station by remember { mutableStateOf(ContestGen.station()) }
     var playing by remember { mutableStateOf(false) }
@@ -135,6 +165,11 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     var noiseLv by remember { mutableStateOf(s.contestNoise) }
     // 语速：拖动只改本地值，松手落盘，下一轮播报生效
     var wpmLv by remember(mode) { mutableStateOf(s.contestWpm) }
+    // 虚拟赛场：同频多台（pileup）与传播波动（QSB），仅 CW 生效
+    var pileup by remember { mutableStateOf(false) }
+    var qsb by remember { mutableStateOf(false) }
+    // 干扰台随目标台一起换：每个目标台配两个固定干扰台，重播时听感一致
+    val pileupStations = remember(station) { List(2) { ContestGen.station() } }
     val script = remember(station, mode, stdMode) { ContestGen.script(station, mode, stdMode) }
     // SSB 模式额外给出明文版（非字母解释法），显示在报文内容之后
     val plainScript = remember(station, mode) {
@@ -181,6 +216,10 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         app.radio.stop()
         app.voiceBank.stop()
         app.speaker.stop()
+        // 被来电等打断时底噪也会停：再次播放时重新拉起
+        if (!app.noise.isPlaying) {
+            app.noise.start(app.prefs.data.volume, app.prefs.data.contestNoise)
+        }
         playing = true
         loopSession++
     }
@@ -199,13 +238,37 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             // 码速/音调/音量每轮重播实时读取，用户调节后下一轮自动生效，无需停止重开
             val now = app.prefs.data
             if (mode == ContestMode.CW) {
-                app.audio.play(
-                    voices = listOf(VoiceSpec(
+                // 目标台：满增益居中；开启同频多台时叠加两个弱干扰台（不同音调/码速/起始时刻）
+                val voices = mutableListOf(
+                    VoiceSpec(
                         text = script,
                         fist = station.cwFist.copy(wpm = now.contestWpm.toDouble()),
                         toneHz = now.toneHz.toDouble()
-                    )),
-                    volume = now.volume, noiseLevel = 0f
+                    )
+                )
+                if (pileup) {
+                    pileupStations.forEachIndexed { i, st ->
+                        voices += VoiceSpec(
+                            text = ContestGen.script(st, ContestMode.CW),
+                            fist = st.cwFist.copy(
+                                wpm = (now.contestWpm + if (i == 0) -4 else 3)
+                                    .coerceIn(8, 40).toDouble()
+                            ),
+                            // 音调错开 50~90Hz：同频但可分辨，接近真实 pileup 的"几个人叠在一起"
+                            toneHz = (now.toneHz + if (i == 0) -70 else 55).toDouble(),
+                            startMs = if (i == 0) 1100 else 2600,
+                            gain = if (i == 0) 0.42f else 0.34f
+                        )
+                    }
+                }
+                app.audio.play(
+                    voices = voices,
+                    volume = now.volume, noiseLevel = 0f,
+                    title = "赛事听抄",
+                    subtitle = if (pileup) "CW · ${now.contestWpm} WPM · PILEUP"
+                        else "CW · ${now.contestWpm} WPM",
+                    // 传播波动：深衰落；关闭时保持稳定信号，便于先分辨再进阶
+                    fadeDepth = if (qsb) 1f else 0.35f
                 )
                 while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
             } else {
@@ -238,7 +301,9 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                                         fist = station.cwFist.copy(wpm = now.contestWpm.toDouble()),
                                         toneHz = now.toneHz.toDouble()
                                     )),
-                                    volume = now.volume, noiseLevel = 0f
+                                    volume = now.volume, noiseLevel = 0f,
+                                    title = "赛事听抄",
+                                    subtitle = "SSB 兜底拍发"
                                 )
                                 while (app.audio.isPlaying && playing) kotlinx.coroutines.delay(100)
                             }
@@ -260,7 +325,29 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     fun checkIt() {
         // RST 固定 599，不参与判分输入
         check = ContestGen.check(station, callIn.text, "599", serialIn.text)
-        check?.let { app.stats.reportContest(it.score) }
+        check?.let { c ->
+            app.stats.reportContest(c.score)
+            app.contestLog.add(
+                ContestQso(
+                    timeMs = System.currentTimeMillis(),
+                    call = station.call,
+                    country = station.country,
+                    mode = if (mode == ContestMode.CW) "CW" else "SSB",
+                    serial = station.serial,
+                    report = station.report,
+                    callOk = c.callOk,
+                    reportOk = c.reportOk,
+                    serialOk = c.serialOk
+                )
+            )
+        }
+    }
+
+    // 播放时保持常亮；被来电等打断后立即停播，避免通话中继续出声
+    KeepScreenOn(playing)
+    val interruption = AudioGate.interruption
+    LaunchedEffect(interruption) {
+        if (interruption > 0 && playing) stop()
     }
 
     DisposableEffect(Unit) {
@@ -284,7 +371,12 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                 .background(Brush.verticalGradient(listOf(PanelBg, Color(0xFF0E1116))))
         ) {
             Spacer(Modifier.height(8.dp))
-            MetalHeader(onBack = { onBack() }, title = "CW / SSB 赛事听抄", subtitle = "模拟电台面板")
+            MetalHeader(
+                onBack = { onBack() },
+                title = "CW / SSB 赛事听抄",
+                subtitle = "模拟电台面板",
+                onReview = { exportMsg = null; showReview = true }
+            )
             Spacer(Modifier.height(8.dp))
 
             // 频率面板（只显示频率 + 模式，不显示对方呼号 —— 真实电台你不知道对方是谁）
@@ -396,6 +488,32 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
                     }
                 }
             }
+
+            // 赛场场景开关（仅 CW）：同频多台 / 传播波动。切换即重播，立即生效
+            if (mode == ContestMode.CW) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SceneChip("同频多台", pileup) {
+                        pileup = !pileup
+                        if (playing) loopSession++
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    SceneChip("传播波动", qsb) {
+                        qsb = !qsb
+                        if (playing) loopSession++
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = if (pileup) "抄收最强目标台" else "",
+                        color = LedDim, fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1, softWrap = false
+                    )
+                }
+            }
             Spacer(Modifier.height(8.dp))
 
             // 频谱瀑布 + 信号条：融合在同一面板内
@@ -435,12 +553,26 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             modifier = Modifier.padding(12.dp)
         )
     }
+
+    if (showReview) {
+        ContestReviewDialog(
+            app = app,
+            sinceMs = sessionStart,
+            message = exportMsg,
+            onExport = {
+                val name = "cw_contest_" + java.time.LocalDateTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmm")) + ".adi"
+                adifLauncher.launch(name)
+            },
+            onClose = { showReview = false }
+        )
+    }
 }
 
 // ============ 子组件 ============
 
 @Composable
-private fun MetalHeader(onBack: () -> Unit, title: String, subtitle: String) {
+private fun MetalHeader(onBack: () -> Unit, title: String, subtitle: String, onReview: () -> Unit) {
     // 与其他板块保持同样的宽度：左右各留 14dp、10dp 圆角、1dp 描边
     Box(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
@@ -460,6 +592,11 @@ private fun MetalHeader(onBack: () -> Unit, title: String, subtitle: String) {
             Spacer(Modifier.width(6.dp))
             Text(subtitle, color = LedDim, fontSize = 9.sp,
                 fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false)
+            Spacer(Modifier.weight(1f))
+            Text("复盘", color = LedCyan, fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onReview() }
+                    .padding(horizontal = 6.dp, vertical = 4.dp))
         }
     }
 }
@@ -539,6 +676,31 @@ private fun StdToggle(std: Boolean, onStd: (Boolean) -> Unit) {
     ) {
         ModeSegment("口语", !std) { onStd(false) }
         ModeSegment("标准", std) { onStd(true) }
+    }
+}
+
+/** 赛场场景开关：点亮=开启，轻量胶囊样式，放在 CW 控制区下方 */
+@Composable
+private fun SceneChip(text: String, on: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (on) LedCyan.copy(alpha = 0.18f) else PanelRecessed)
+            .border(1.dp, if (on) LedCyan else PanelLine, RoundedCornerShape(6.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(6.dp).clip(CircleShape)
+                .background(if (on) LedCyan else LedOff)
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text, color = if (on) LedCyan else LedDim, fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal
+        )
     }
 }
 
@@ -1010,7 +1172,7 @@ private fun BottomPanelBar(
 
         if (playing) {
             PanelButton(
-                text = if (nextReplayIn > 0) "停止 ${nextReplayIn}s" else "停止",
+                text = if (nextReplayIn > 0) "停 ${nextReplayIn}s" else "停止",
                 color = LedRed, filled = true,
                 modifier = Modifier.weight(1f)
             ) { onStop() }
@@ -1044,21 +1206,172 @@ private fun PanelButton(
         else -> color
     }
     Box(
-        modifier = modifier.height(52.dp)
+        modifier = modifier
+            .heightIn(min = 52.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (filled) color else color.copy(alpha = 0.12f))
             .border(1.dp, if (filled) color else color.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 4.dp),
+            .padding(horizontal = 6.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
             color = contentColor,
-            fontSize = 14.sp, fontWeight = FontWeight.Bold,
+            fontSize = 13.sp, fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
             maxLines = 1, softWrap = false,
+            overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
         )
     }
 }
+
+// ============ 赛事复盘 ============
+
+@Composable
+private fun ContestReviewDialog(
+    app: AppState,
+    sinceMs: Long,
+    message: String?,
+    onExport: () -> Unit,
+    onClose: () -> Unit
+) {
+    val review = app.contestLog.review(sinceMs)
+    val session = app.contestLog.items.filter { it.timeMs >= sinceMs }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("赛事复盘", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                if (review.total == 0) {
+                    Text(
+                        text = "本次会话还没有判分记录。先「接收呼叫」，填写呼号与序号后点「提交」。",
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp
+                    )
+                } else {
+                    Text(
+                        text = "本次会话 ${review.total} 次抄收",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "呼号正确率 ${reviewPct(review.callRate)} · 序号正确率 ${reviewPct(review.serialRate)}",
+                        fontSize = 12.sp,
+                        color = LedDim,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Text(
+                        text = "平均得分 ${"%.2f".format(review.avgScore)} / 3 · ${reviewGrade(review.avgScore)}",
+                        fontSize = 12.sp,
+                        color = LedDim,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    // —— 失误分布：一眼看出是呼号还是序号拖后腿 ——
+                    val callErr = session.count { !it.callOk }
+                    val serialErr = session.count { !it.serialOk }
+                    Spacer(Modifier.height(10.dp))
+                    ErrorBar("呼号失误", callErr, session.size)
+                    Spacer(Modifier.height(5.dp))
+                    ErrorBar("序号失误", serialErr, session.size)
+                    Spacer(Modifier.height(10.dp))
+                    session.takeLast(12).reversed().forEach { q ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = q.call,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                text = "${reviewMark(q.callOk)}呼号 ${reviewMark(q.serialOk)}序号  ${reviewTime(q.timeMs)}",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = LedDim
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "日志累计 ${app.contestLog.items.size} 条 · 导出为标准 ADIF 3.1.4，可导入 N1MM / Log4OM 等软件。",
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp,
+                    color = LedDim
+                )
+                message?.let {
+                    Text(
+                        text = it,
+                        fontSize = 11.sp,
+                        color = LedGreen,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onExport, enabled = session.isNotEmpty()) {
+                Text("导出 ADIF")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onClose) { Text("关闭") }
+        }
+    )
+}
+
+private fun reviewPct(v: Float): String = "%.0f%%".format(v * 100f)
+
+/** 赛后评级：按平均得分三档 */
+private fun reviewGrade(avg: Float): String = when {
+    avg >= 2.7f -> "优秀，可上真台"
+    avg >= 2.0f -> "良好，注意细节"
+    else -> "需加强，建议降速"
+}
+
+/** 失误条形：宽度按失误占比，0 次显示绿色 0 */
+@Composable
+private fun ErrorBar(label: String, errors: Int, total: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label, color = LedDim, fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace, modifier = Modifier.width(58.dp)
+        )
+        Box(
+            Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp))
+                .background(PanelLine)
+        ) {
+            if (errors > 0) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(errors.toFloat() / total.coerceAtLeast(1))
+                        .fillMaxHeight()
+                        .background(LedRed)
+                )
+            }
+        }
+        Text(
+            "$errors", color = if (errors == 0) LedGreen else LedRed,
+            fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(28.dp), textAlign = TextAlign.End
+        )
+    }
+}
+
+private fun reviewMark(ok: Boolean): String = if (ok) "✓" else "✗"
+
+private fun reviewTime(ms: Long): String = java.time.Instant.ofEpochMilli(ms)
+    .atZone(java.time.ZoneId.systemDefault())
+    .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+

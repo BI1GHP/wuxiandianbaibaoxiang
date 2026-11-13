@@ -23,6 +23,7 @@ import kotlin.random.Random
  */
 class VoiceSynth(context: Context) {
 
+    private val appContext = context.applicationContext
     private var track: AudioTrack? = null
 
     var isPlaying by mutableStateOf(false)
@@ -40,6 +41,7 @@ class VoiceSynth(context: Context) {
 
     private fun play(pcm: ShortArray) {
         stop()
+        AudioGate.acquire(appContext, TAG) { stop() }
         val minBuf = AudioTrack.getMinBufferSize(
             Synth.SR, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
@@ -73,15 +75,19 @@ class VoiceSynth(context: Context) {
         } finally {
             isPlaying = false
             release(t)
-            if (track === t) track = null
+            if (track === t) {
+                track = null
+                AudioGate.release(TAG)
+            }
         }
     }
 
     fun stop() {
-        val t = track ?: return
+        val t = track
         track = null
         isPlaying = false
-        release(t)
+        if (t != null) release(t)
+        AudioGate.release(TAG)
     }
 
     private fun release(t: AudioTrack) {
@@ -89,6 +95,10 @@ class VoiceSynth(context: Context) {
         try { t.flush() } catch (_: Exception) {}
         try { t.stop() } catch (_: Exception) {}
         try { t.release() } catch (_: Exception) {}
+    }
+
+    private companion object {
+        const val TAG = "voice_synth"
     }
 }
 

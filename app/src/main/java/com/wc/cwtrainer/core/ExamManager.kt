@@ -21,16 +21,30 @@ class ExamManager(context: Context) {
     private val sp = context.getSharedPreferences("wc_exam", Context.MODE_PRIVATE)
 
     /** 错题本（响应式，UI 直接观察） */
+    var wrongA by mutableStateOf(loadWrong(ExamLevel.A))
+        private set
     var wrongB by mutableStateOf(loadWrong(ExamLevel.B))
         private set
     var wrongC by mutableStateOf(loadWrong(ExamLevel.C))
         private set
 
     /** 成绩记录（最新在前，最多 10 条） */
+    var historyA by mutableStateOf(loadHistory(ExamLevel.A))
+        private set
     var historyB by mutableStateOf(loadHistory(ExamLevel.B))
         private set
     var historyC by mutableStateOf(loadHistory(ExamLevel.C))
         private set
+
+    /** 导入备份后重新读入错题本与成绩记录 */
+    fun reload() {
+        wrongA = loadWrong(ExamLevel.A)
+        wrongB = loadWrong(ExamLevel.B)
+        wrongC = loadWrong(ExamLevel.C)
+        historyA = loadHistory(ExamLevel.A)
+        historyB = loadHistory(ExamLevel.B)
+        historyC = loadHistory(ExamLevel.C)
+    }
 
     private fun loadWrong(level: ExamLevel): Map<String, WrongItem> {
         val p = level.name
@@ -59,10 +73,18 @@ class ExamManager(context: Context) {
         }.apply()
     }
 
-    private fun wrongMap(level: ExamLevel) = if (level == ExamLevel.B) wrongB else wrongC
+    private fun wrongMap(level: ExamLevel) = when (level) {
+        ExamLevel.A -> wrongA
+        ExamLevel.B -> wrongB
+        ExamLevel.C -> wrongC
+    }
 
     private fun updateWrongMap(level: ExamLevel, map: Map<String, WrongItem>) {
-        if (level == ExamLevel.B) wrongB = map else wrongC = map
+        when (level) {
+            ExamLevel.A -> wrongA = map
+            ExamLevel.B -> wrongB = map
+            ExamLevel.C -> wrongC = map
+        }
         saveWrong(level, map)
     }
 
@@ -134,8 +156,11 @@ class ExamManager(context: Context) {
 
     // ========== 成绩记录（最多 10 条，超出覆盖最早一条） ==========
 
-    fun history(level: ExamLevel): List<ExamRecord> =
-        if (level == ExamLevel.B) historyB else historyC
+    fun history(level: ExamLevel): List<ExamRecord> = when (level) {
+        ExamLevel.A -> historyA
+        ExamLevel.B -> historyB
+        ExamLevel.C -> historyC
+    }
 
     /** 交卷后追加一条成绩记录 */
     fun addRecord(result: ExamResult) {
@@ -147,12 +172,20 @@ class ExamManager(context: Context) {
             timeMs = result.timeMs
         )
         val list = (listOf(rec) + history(result.level)).take(MAX_RECORDS)
-        if (result.level == ExamLevel.B) historyB = list else historyC = list
+        when (result.level) {
+            ExamLevel.A -> historyA = list
+            ExamLevel.B -> historyB = list
+            ExamLevel.C -> historyC = list
+        }
         saveHistory(result.level, list)
     }
 
     fun clearHistory(level: ExamLevel) {
-        if (level == ExamLevel.B) historyB = emptyList() else historyC = emptyList()
+        when (level) {
+            ExamLevel.A -> historyA = emptyList()
+            ExamLevel.B -> historyB = emptyList()
+            ExamLevel.C -> historyC = emptyList()
+        }
         sp.edit().remove("hist:${level.name}").apply()
     }
 

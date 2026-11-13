@@ -1,5 +1,7 @@
 package com.wc.cwtrainer.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,7 +15,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -29,16 +34,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.BuildConfig
+import com.wc.cwtrainer.core.Backup
 import com.wc.cwtrainer.core.InputMode
 import com.wc.cwtrainer.core.KeyMode
+import com.wc.cwtrainer.core.ThemeMode
 import com.wc.cwtrainer.core.UpdateManager
 import com.wc.cwtrainer.ui.Amber
+import com.wc.cwtrainer.ui.CreamPalette
+import com.wc.cwtrainer.ui.FieldPalette
+import com.wc.cwtrainer.ui.Green
+import com.wc.cwtrainer.ui.WcColors
 import com.wc.cwtrainer.ui.LabeledSlider
 import com.wc.cwtrainer.ui.Line
 import com.wc.cwtrainer.ui.Pill
@@ -49,20 +62,221 @@ import com.wc.cwtrainer.ui.SectionTitle
 import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
-fun SettingsScreen(app: AppState, onBack: () -> Unit) {
+fun SettingsScreen(
+    app: AppState,
+    onBack: () -> Unit,
+    onPreviewTheme: () -> Unit,
+    onOpenSkins: () -> Unit,
+    onOpenSync: () -> Unit,
+    onOpenAccount: () -> Unit,
+    onOpenMember: () -> Unit
+) {
     val s = app.prefs.data
     var showLicense by remember { mutableStateOf(false) }
+    var presetMsg by remember { mutableStateOf<String?>(null) }
+    var termOpen by remember { mutableStateOf<String?>(null) }
+
+    // —— 数据备份 / 恢复 ——
+    val context = LocalContext.current
+    var backupMsg by remember { mutableStateOf<String?>(null) }
+    var backupOk by remember { mutableStateOf(false) }
+    var pendingImport by remember { mutableStateOf<String?>(null) }
+    val exporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            val r = runCatching {
+                val text = Backup.export(context)
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(text.toByteArray(Charsets.UTF_8))
+                } ?: error("无法写入所选位置")
+            }
+            backupOk = r.isSuccess
+            backupMsg = r.fold(
+                { "备份已导出，请妥善保存该文件" },
+                { "导出失败：${it.message ?: "未知错误"}" }
+            )
+        }
+    }
+    val importer = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val text = runCatching {
+                context.contentResolver.openInputStream(uri)?.use {
+                    it.readBytes().toString(Charsets.UTF_8)
+                } ?: error("无法读取所选文件")
+            }.getOrNull()
+            if (text == null) {
+                backupOk = false
+                backupMsg = "导入失败：无法读取所选文件"
+            } else {
+                pendingImport = text
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("设置", onBack)
+        ScreenHeader("设置", onBack, subtitle = "SYSTEM · WC-2025")
         Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
+            SectionCard {
+                SectionTitle("训练预设")
+                Text(
+                    text = "一键把码速、侧音、底噪调到对应阶段；应用后仍可单独微调。",
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("新手", false) {
+                        app.prefs.update {
+                            it.copy(
+                                wpm = 12, farnsworth = 20, toneHz = 700, volume = 0.8f,
+                                copyWpm = 12, learnWpm = 12, contestWpm = 15,
+                                translatorWpm = 12, noiseLevel = 0.05f, contestNoise = 0.08f,
+                                ttsRate = 0.9f
+                            )
+                        }
+                        presetMsg = "已应用「新手」预设：12 WPM，Farnsworth 20"
+                    }
+                    Pill("进阶", false) {
+                        app.prefs.update {
+                            it.copy(
+                                wpm = 20, farnsworth = 0, toneHz = 650, volume = 0.85f,
+                                copyWpm = 20, learnWpm = 20, contestWpm = 25,
+                                translatorWpm = 20, noiseLevel = 0.08f, contestNoise = 0.12f,
+                                ttsRate = 1.0f
+                            )
+                        }
+                        presetMsg = "已应用「进阶」预设：20 WPM，常规侧音"
+                    }
+                    Pill("竞赛", false) {
+                        app.prefs.update {
+                            it.copy(
+                                wpm = 28, farnsworth = 0, toneHz = 600, volume = 0.9f,
+                                copyWpm = 28, learnWpm = 24, contestWpm = 30,
+                                translatorWpm = 24, noiseLevel = 0.18f, contestNoise = 0.3f,
+                                ttsRate = 1.1f
+                            )
+                        }
+                        presetMsg = "已应用「竞赛」预设：28 WPM，高底噪"
+                    }
+                }
+                presetMsg?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(text = it, color = Green, fontSize = 10.sp)
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            SectionCard {
+                SectionTitle("外观主题")
+                Text(
+                    text = "两套主题共用同一套操作逻辑，点选立即应用到整个 App。",
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ThemePreviewCard(
+                        title = "野战电台",
+                        subtitle = "金属面板 · 琥珀 LED",
+                        palette = FieldPalette,
+                        selected = s.theme == ThemeMode.FIELD,
+                        modifier = Modifier.weight(1f)
+                    ) { app.prefs.update { it.copy(theme = ThemeMode.FIELD) } }
+                    ThemePreviewCard(
+                        title = "奶油手帐",
+                        subtitle = "纸感圆角 · 珊瑚点缀",
+                        palette = CreamPalette,
+                        selected = s.theme == ThemeMode.CREAM,
+                        modifier = Modifier.weight(1f)
+                    ) { app.prefs.update { it.copy(theme = ThemeMode.CREAM) } }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Pill("全屏预览", false) { onPreviewTheme() }
+                    Spacer(Modifier.width(8.dp))
+                    Pill("皮肤商店", false) { onOpenSkins() }
+                }
+                Text(
+                    text = "全屏对比两套主题；更多皮肤可用训练积分在商店解锁",
+                    color = TextDim,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("字号", color = TextMain, fontSize = 13.sp)
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "${(s.fontScale * 100).roundToInt()}%",
+                        color = Amber,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("标准", s.fontScale == 1f) {
+                        app.prefs.update { it.copy(fontScale = 1f) }
+                    }
+                    Pill("大", s.fontScale == 1.15f) {
+                        app.prefs.update { it.copy(fontScale = 1.15f) }
+                    }
+                    Pill("特大", s.fontScale == 1.3f) {
+                        app.prefs.update { it.copy(fontScale = 1.3f) }
+                    }
+                }
+                Text(
+                    text = "放大字号不影响按钮与间距，适合年长用户或强光环境阅读。",
+                    color = TextDim,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("界面音效", color = TextMain, fontSize = 13.sp)
+                        Text(
+                            text = "继电器咔嗒与旋钮嘀声，可随时关闭",
+                            color = TextDim,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    Switch(
+                        checked = s.uiSound,
+                        onCheckedChange = { on ->
+                            app.prefs.update { it.copy(uiSound = on) }
+                        }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
             SectionCard {
                 SectionTitle("电码与音频")
                 LabeledSlider(
@@ -220,6 +434,113 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
             Spacer(Modifier.height(10.dp))
 
             SectionCard {
+                SectionTitle("术语说明")
+                Text(
+                    text = "点开查看常用缩写，训练时不用再猜参数含义。",
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(Modifier.height(4.dp))
+                Terms.forEach { (term, desc) ->
+                    TermRow(
+                        term = term,
+                        desc = desc,
+                        expanded = termOpen == term
+                    ) { termOpen = if (termOpen == term) null else term }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            SectionCard {
+                SectionTitle("训练统计")
+                val days = app.stats.last7Days()
+                val confused = app.stats.topConfused()
+                Text(
+                    text = "连续训练 ${app.stats.streakDays()} 天 · 7 日合计 ${days.sumOf { it.totalCount }} 次",
+                    color = TextMain,
+                    fontSize = 13.sp
+                )
+                Text(
+                    text = "今日：背码 ${days.lastOrNull()?.learnCount ?: 0} · 听抄 ${days.lastOrNull()?.copyCount ?: 0} · 赛事 ${days.lastOrNull()?.contestCount ?: 0}",
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Text(
+                    text = if (confused.isEmpty()) "最易混字符：暂无记录"
+                    else "最易混字符：" + confused.joinToString("  ") { (c, n) -> "$c ×$n" },
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Text(
+                    text = "每日训练曲线见首页「训练历史」卡片。",
+                    color = TextDim,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            SectionCard {
+                SectionTitle("数据备份")
+                Text(
+                    text = "导出全部设置、练习统计、错题本与考试记录；换机或重装后导入同一文件即可恢复。" +
+                        "「账号云同步」可把同一份备份在多台设备与网页端之间搬运。",
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("导出数据", false) { exporter.launch(backupFileName()) }
+                    Pill("导入数据", false) { importer.launch(arrayOf("*/*")) }
+                    Pill("进度同步", false) { onOpenSync() }
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("账号云同步", false) { onOpenAccount() }
+                }
+                backupMsg?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = it,
+                        color = if (backupOk) Green else Red,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            SectionCard {
+                SectionTitle("会员与支付")
+                Text(
+                    text = "会员功能默认暂未开放，由管理后台统一开启或关闭；当前全部训练功能免费使用。",
+                    color = TextDim,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Pill("会员中心", false) { onOpenMember() }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (app.member.enabled) "已开放" else "暂未开放",
+                        color = if (app.member.enabled) Green else TextDim,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            SectionCard {
                 SectionTitle("关于")
                 Text(
                     text = "CW练考通  ${BuildConfig.VERSION_NAME}",
@@ -258,6 +579,45 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
         }
     }
 
+    pendingImport?.let { text ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text("确认恢复数据") },
+            text = {
+                Text(
+                    text = "导入会覆盖当前的设置、练习统计、错题本与考试记录，且无法撤销。确定继续？",
+                    fontSize = 13.sp,
+                    color = TextMain
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val r = runCatching {
+                            val n = Backup.import(context, text)
+                            app.prefs.reload()
+                            app.stats.reload()
+                            app.srs.reload()
+                            app.contestLog.reload()
+                            app.accent.reload()
+                            app.exam.reload()
+                            n
+                        }
+                        backupOk = r.isSuccess
+                        backupMsg = r.fold(
+                            { "已恢复 $it 项设置与练习记录" },
+                            { "导入失败：${it.message ?: "文件格式不正确"}" }
+                        )
+                        pendingImport = null
+                    }
+                ) { Text("覆盖并恢复") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImport = null }) { Text("取消") }
+            }
+        )
+    }
+
     if (showLicense) {
         AlertDialog(
             onDismissRequest = { showLicense = false },
@@ -284,6 +644,160 @@ fun SettingsScreen(app: AppState, onBack: () -> Unit) {
         )
     }
 }
+
+/**
+ * 主题实时预览卡：用目标主题的色板画一个迷你电台面板，
+ * 因此预览本身不受当前主题影响，点选后整个 App 立即切换。
+ */
+@Composable
+private fun ThemePreviewCard(
+    title: String,
+    subtitle: String,
+    palette: WcColors,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(palette.bg)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) palette.accent else palette.line,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .clickable { onClick() }
+            .padding(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(palette.surface1)
+                .border(1.dp, palette.line, RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(palette.accent)
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    text = "CW",
+                    color = palette.accent,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = "20 WPM",
+                    color = palette.textDim,
+                    fontSize = 8.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Box(
+                Modifier.fillMaxWidth().height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)).background(palette.surface2)
+            )
+            Spacer(Modifier.height(4.dp))
+            Box(
+                Modifier.fillMaxWidth(0.72f).height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)).background(palette.line)
+            )
+            Spacer(Modifier.height(7.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MiniChip("发报", palette.accent)
+                MiniChip("听抄", palette.accentAlt)
+            }
+        }
+        Spacer(Modifier.height(7.dp))
+        Text(
+            text = title,
+            color = palette.textMain,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = subtitle,
+            color = palette.textDim,
+            fontSize = 9.sp,
+            lineHeight = 12.sp
+        )
+    }
+}
+
+@Composable
+private fun MiniChip(text: String, color: Color) {
+    Text(
+        text = text,
+        color = color,
+        fontSize = 8.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = 0.14f))
+            .border(1.dp, color.copy(alpha = 0.4f), RoundedCornerShape(50))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    )
+}
+
+/** 常用术语：训练与考试里反复出现的缩写 */
+private val Terms = listOf(
+    "WPM" to "每分钟单词数（词/分）。CW 按 Paris 标准计：1 个单词 = 50 个码元时长，20 WPM 约等于每秒 1 个字母的节奏。",
+    "Farnsworth" to "法恩斯沃斯变速法：字符本身保持高速，只把字母之间、单词之间的间隔拉长。初学先用高速认字符，再逐步缩短间隔提总速。",
+    "侧音" to "Sidetone：发报时自己耳机里听到的监听音，应与发射音调一致；练习用 600–700 Hz 最耐听。",
+    "Iambic" to "双桨键模式：左右桨交替按压时自动补点补划（B 模式多补一个），适合高速发报；单桨键请关闭。",
+    "SSB" to "单边带（J3E），话音通信方式。本 App 的「SSB 解释法」指呼号字母的口语读法，默认 NATO（Alpha、Bravo…），可切换中国读法。"
+)
+
+@Composable
+private fun TermRow(
+    term: String,
+    desc: String,
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = term,
+                color = if (expanded) Amber else TextMain,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = if (expanded) "收起" else "说明",
+                color = TextDim,
+                fontSize = 9.sp
+            )
+        }
+        if (expanded) {
+            Text(
+                text = desc,
+                color = TextDim,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(top = 5.dp)
+            )
+        }
+    }
+}
+
+private fun backupFileName(): String =
+    "cwtrainer_backup_" + SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date()) + ".json"
 
 @Composable
 private fun CheckForUpdateButton() {

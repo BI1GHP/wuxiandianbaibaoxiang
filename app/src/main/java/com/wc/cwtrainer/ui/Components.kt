@@ -1,5 +1,6 @@
 package com.wc.cwtrainer.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,15 +12,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,38 +31,116 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wc.cwtrainer.core.UiSounds
 
+/**
+ * 设备铭牌底板：面板色 + 描边 + 四角螺钉。
+ * 用于页头与首页品牌区，统一「这台机器」的视觉语言。
+ */
 @Composable
-fun ScreenHeader(title: String, onBack: () -> Unit) {
+fun NameplateCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Box(modifier = modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Surface2)
+                .border(1.dp, Line, RoundedCornerShape(14.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            content = content
+        )
+        // 四角螺钉：只做视觉细节，不拦截触摸
+        Canvas(Modifier.matchParentSize()) {
+            val inset = 7.dp.toPx()
+            val r = 1.2.dp.toPx()
+            listOf(
+                Offset(inset, inset),
+                Offset(size.width - inset, inset),
+                Offset(inset, size.height - inset),
+                Offset(size.width - inset, size.height - inset)
+            ).forEach { drawCircle(color = Line, radius = r, center = it) }
+        }
+    }
+}
+
+/**
+ * 统一页头：铭牌样式，左侧返回键 + 标题/副标题，右侧电源指示灯 + 状态。
+ * 各训练页无需改动调用方式，仅按需补 subtitle / status。
+ */
+@Composable
+fun ScreenHeader(
+    title: String,
+    onBack: () -> Unit,
+    subtitle: String? = null,
+    status: String = "READY"
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text(
-            text = "‹ 返回",
-            color = TextDim,
-            fontSize = 14.sp,
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { onBack() }
-                .padding(horizontal = 6.dp, vertical = 4.dp)
-        )
-        Text(
-            text = title,
-            color = TextMain,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 10.dp)
-        )
+        NameplateCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "‹",
+                    color = TextDim,
+                    fontSize = 22.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onBack() }
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 4.dp)
+                ) {
+                    Text(
+                        text = title,
+                        color = TextMain,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    subtitle?.let {
+                        Text(
+                            text = it.uppercase(),
+                            color = TextDim,
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.6.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Green)
+                )
+                Text(
+                    text = status,
+                    color = Green,
+                    fontSize = 8.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(start = 5.dp)
+                )
+            }
+        }
     }
 }
 
@@ -114,13 +196,18 @@ fun Pill(
             .clip(RoundedCornerShape(50))
             .background(if (selected) Amber.copy(alpha = 0.16f) else Surface2)
             .border(1.dp, if (selected) Amber else Line, RoundedCornerShape(50))
-            .clickable { onClick() }
+            .clickable {
+                UiSounds.tick()
+                onClick()
+            }
             .padding(horizontal = 13.dp, vertical = 7.dp)
     ) {
         Text(
             text = text,
             color = if (selected) Amber else TextDim,
-            fontSize = 13.sp
+            fontSize = 13.sp,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -177,11 +264,17 @@ fun WpmAdjuster(
         Spacer(Modifier.width(6.dp))
         Box(
             modifier = Modifier
-                .size(26.dp)
+                .defaultMinSize(minWidth = 28.dp, minHeight = 28.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(Surface1)
                 .border(1.dp, Line, RoundedCornerShape(6.dp))
-                .clickable { if (wpm > 5) onWpm(wpm - 1) },
+                .clickable {
+                    if (wpm > 5) {
+                        UiSounds.tick()
+                        onWpm(wpm - 1)
+                    }
+                }
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             contentAlignment = Alignment.Center
         ) { Text("−", color = Amber, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
         Text(
@@ -192,11 +285,17 @@ fun WpmAdjuster(
         )
         Box(
             modifier = Modifier
-                .size(26.dp)
+                .defaultMinSize(minWidth = 28.dp, minHeight = 28.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(Surface1)
                 .border(1.dp, Line, RoundedCornerShape(6.dp))
-                .clickable { if (wpm < 40) onWpm(wpm + 1) },
+                .clickable {
+                    if (wpm < 40) {
+                        UiSounds.tick()
+                        onWpm(wpm + 1)
+                    }
+                }
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             contentAlignment = Alignment.Center
         ) { Text("+", color = Amber, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
         Text("WPM", color = TextDim, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
@@ -296,7 +395,10 @@ fun BigButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = tr
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(if (enabled) Amber else Surface2)
-            .clickable(enabled = enabled) { onClick() }
+            .clickable(enabled = enabled) {
+                UiSounds.click()
+                onClick()
+            }
             .padding(horizontal = 16.dp, vertical = 11.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -316,7 +418,10 @@ fun GhostButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = 
             .clip(RoundedCornerShape(12.dp))
             .background(Surface2)
             .border(1.dp, Line, RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled) { onClick() }
+            .clickable(enabled = enabled) {
+                UiSounds.tick()
+                onClick()
+            }
             .padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -360,4 +465,14 @@ fun DividerLine() {
             .background(Line.copy(alpha = 0.5f))
             .padding(top = 1.dp)
     )
+}
+
+/** 播放期间保持屏幕常亮：避免长报文/赛事听抄听到一半熄屏断音 */
+@Composable
+fun KeepScreenOn(active: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(active) {
+        if (active) view.keepScreenOn = true
+        onDispose { if (active) view.keepScreenOn = false }
+    }
 }

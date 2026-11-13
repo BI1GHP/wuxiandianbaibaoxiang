@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">CW练考通</string>
+    <string name="widget_cw_desc">码速面板：查看当前 WPM 与最高正确率，一键继续训练</string>
 </resources>

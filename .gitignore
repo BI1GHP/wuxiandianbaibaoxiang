@@ -17,6 +17,9 @@ keystore.properties
 *.p12
 *.pfx
 
+# 同步服务运行时数据（账号备份、会员开关、兑换码）
+server/data/
+
 # Android Studio
 .idea/
 *.iml

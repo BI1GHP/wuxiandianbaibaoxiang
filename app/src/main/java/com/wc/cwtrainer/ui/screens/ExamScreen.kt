@@ -55,6 +55,9 @@ import com.wc.cwtrainer.core.ExamLevel
 import com.wc.cwtrainer.core.ExamRecord
 import com.wc.cwtrainer.core.Question
 import com.wc.cwtrainer.core.QuestionBank
+import com.wc.cwtrainer.ui.QslCardDialog
+import com.wc.cwtrainer.ui.QslData
+import com.wc.cwtrainer.ui.examQsl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -230,6 +233,7 @@ fun ExamScreen(app: AppState, onBack: () -> Unit) {
         // 题库级别（文件夹标签风，两等分）
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PaperTab("A 类题库", level == ExamLevel.A, Modifier.weight(1f)) { level = ExamLevel.A }
             PaperTab("B 类题库", level == ExamLevel.B, Modifier.weight(1f)) { level = ExamLevel.B }
             PaperTab("C 类题库", level == ExamLevel.C, Modifier.weight(1f)) { level = ExamLevel.C }
         }
@@ -252,7 +256,7 @@ fun ExamScreen(app: AppState, onBack: () -> Unit) {
             )
             1 -> ClassifyPane(app, level)
             2 -> {
-                val wrongQs = remember(level, app.exam.wrongB, app.exam.wrongC) {
+                val wrongQs = remember(level, app.exam.wrongA, app.exam.wrongB, app.exam.wrongC) {
                     app.exam.wrongQuestions(level)
                 }
                 if (wrongQs.isEmpty()) {
@@ -741,7 +745,7 @@ private fun PracticePane(
                     submitted = true
                 }
             }
-            PaperButton(if (idx < queue.size - 1) "下一题 ›" else "已到末题",
+            PaperButton(if (idx < queue.size - 1) "下一题 ›" else "末题",
                 enabled = idx < queue.size - 1,
                 primary = idx < queue.size - 1,
                 modifier = Modifier.weight(1f)) { idx++ }
@@ -1007,6 +1011,7 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
             if (r == null) { stage = "intro"; return }
             var reviewing by remember { mutableStateOf(false) }
             var ridx by remember { mutableIntStateOf(0) }
+            var qslCard by remember { mutableStateOf<QslData?>(null) }
 
             if (reviewing) {
                 if (ridx >= questions.size) ridx = questions.size - 1
@@ -1129,9 +1134,12 @@ private fun ExamPane(app: AppState, level: ExamLevel) {
                     Spacer(Modifier.height(18.dp))
                     PaperButton("逐题回顾", primary = true) { reviewing = true }
                     Spacer(Modifier.height(8.dp))
+                    PaperButton("生成 QSL 成绩单") { qslCard = examQsl(r, level) }
+                    Spacer(Modifier.height(8.dp))
                     PaperButton("再考一次") { stage = "intro" }
                     Spacer(Modifier.height(20.dp))
                 }
+                qslCard?.let { QslCardDialog(it) { qslCard = null } }
             }
         }
     }

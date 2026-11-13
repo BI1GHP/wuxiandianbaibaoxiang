@@ -97,6 +97,16 @@ object ContestGen {
 
     fun station(rng: Random = Random): ContestStation {
         val c = countries[rng.nextInt(countries.size)]
+        return stationOf(c, rng)
+    }
+
+    /** 按语言标签生成台站：口音关卡按国家出题时使用 */
+    fun stationFor(localeTag: String, rng: Random = Random): ContestStation? {
+        val c = countries.firstOrNull { it.localeTag == localeTag } ?: return null
+        return stationOf(c, rng)
+    }
+
+    private fun stationOf(c: Country, rng: Random): ContestStation {
         val prefix = c.prefixes[rng.nextInt(c.prefixes.size)]
         val digit = rng.nextInt(10)
         val suffixLen = c.suffix.first + rng.nextInt(c.suffix.last - c.suffix.first + 1)

@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,9 +19,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontFamily
@@ -50,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wc.cwtrainer.AppState
+import com.wc.cwtrainer.core.AudioGate
 import com.wc.cwtrainer.core.Fist
 import com.wc.cwtrainer.core.Generators
 import com.wc.cwtrainer.core.Morse
@@ -59,8 +65,13 @@ import com.wc.cwtrainer.ui.Amber
 import com.wc.cwtrainer.ui.Bg
 import com.wc.cwtrainer.ui.Cyan
 import com.wc.cwtrainer.ui.Green
+import com.wc.cwtrainer.ui.KeepScreenOn
 import com.wc.cwtrainer.ui.LabeledSlider
 import com.wc.cwtrainer.ui.Line
+import com.wc.cwtrainer.ui.NameplateCard
+import com.wc.cwtrainer.ui.QslCardDialog
+import com.wc.cwtrainer.ui.QslData
+import com.wc.cwtrainer.ui.copyQsl
 import com.wc.cwtrainer.ui.Pill
 import com.wc.cwtrainer.ui.Red
 import com.wc.cwtrainer.ui.ScreenHeader
@@ -71,6 +82,7 @@ import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
 import com.wc.cwtrainer.ui.WpmAdjuster
+import com.wc.cwtrainer.core.UiSounds
 import kotlinx.coroutines.delay
 
 @Composable
@@ -87,6 +99,7 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
     var looping by remember { mutableStateOf(false) }
     var loopSession by remember { mutableStateOf(0) }
     var nextReplayIn by remember { mutableStateOf(0) }
+    var qslCard by remember { mutableStateOf<QslData?>(null) }
 
     fun regenerate() {
         text = when (charset) {
@@ -128,7 +141,9 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
                         toneHz = s.toneHz.toDouble()
                     )
                 ),
-                volume = s.volume
+                volume = s.volume,
+                title = "听抄练习",
+                subtitle = "${s.copyWpm} WPM · 循环听抄"
             )
             while (app.audio.isPlaying) delay(100)
             if (!looping) break
@@ -146,7 +161,14 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
         val acc = TextScore.accuracy(text, answer.text)
         accuracy = acc
         showContent = true
-        app.stats.reportCopy(acc)
+        app.stats.reportCopy(acc, text, answer.text)
+    }
+
+    // 播放时保持常亮；被来电等打断后立即停循环，避免通话中继续出声
+    KeepScreenOn(looping)
+    val interruption = AudioGate.interruption
+    LaunchedEffect(interruption) {
+        if (interruption > 0 && looping) stopLoop()
     }
 
     Column(
@@ -155,34 +177,50 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
             .background(Bg)
             .imePadding()
     ) {
-        // 顶部：返回 + 标题 + 设置入口
+        // 顶部：铭牌页头（返回 + 标题 + 设置入口）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            Text(
-                text = "‹ 返回",
-                color = TextDim,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onBack() }
-                    .padding(horizontal = 6.dp, vertical = 6.dp)
-            )
-            Text(
-                text = "听抄练习",
-                color = TextMain,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 6.dp)
-            )
-            Spacer(Modifier.weight(1f))
-            IconButton(
-                label = if (showSettings) "收起" else "设置",
-                active = showSettings
-            ) { showSettings = !showSettings }
+            NameplateCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "‹",
+                        color = TextDim,
+                        fontSize = 22.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onBack() }
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 4.dp)
+                    ) {
+                        Text(
+                            text = "听抄练习",
+                            color = TextMain,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "COPY · RX",
+                            color = TextDim,
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.6.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    IconButton(
+                        label = if (showSettings) "收起" else "设置",
+                        active = showSettings
+                    ) { showSettings = !showSettings }
+                }
+            }
         }
 
         // 码速调节（独立行，标题栏保持单行紧凑）
@@ -280,8 +318,13 @@ fun CopyScreen(app: AppState, onBack: () -> Unit) {
             onStop = { stopLoop() },
             onToggleContent = { showContent = !showContent },
             onCheck = { check() },
+            onQsl = {
+                qslCard = copyQsl(text, answer.text, accuracy ?: 0f, passCount)
+            },
             modifier = Modifier.padding(12.dp)
         )
+
+        qslCard?.let { QslCardDialog(it) { qslCard = null } }
     }
 }
 
@@ -617,14 +660,8 @@ private fun ContentPanel(
 
         Spacer(Modifier.height(12.dp))
 
-        // 报文原文
-        Text(
-            text = target,
-            color = Green,
-            fontSize = 20.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
-        )
+        // 报文原文：纸带式逐字打印
+        PaperTape(target)
         Spacer(Modifier.height(6.dp))
         MorseStrip(target = normalizedTarget)
 
@@ -684,6 +721,88 @@ private fun ContentPanel(
     }
 }
 
+// —— 纸带配色（纸张隐喻，独立于 App 主题）——
+private val TapePaper = Color(0xFFFBF6E9)
+private val TapeLine = Color(0xFFE2D7C1)
+private val TapeHole = Color(0xFFD9CDB8)
+private val TapeInk = Color(0xFF2B3A33)
+
+/**
+ * 纸带：报文像电传打字机一样逐字打印出来。
+ * 上下两排走带孔用 Canvas 画，文字用等宽字体逐字揭示，末尾带闪烁光标。
+ */
+@Composable
+private fun PaperTape(text: String) {
+    var reveal by remember(text) { mutableIntStateOf(0) }
+    val cursor = rememberInfiniteTransition(label = "tapeCursor").animateFloat(
+        initialValue = 0.15f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(520), RepeatMode.Reverse),
+        label = "tapeCursorAlpha"
+    )
+    LaunchedEffect(text) {
+        reveal = 0
+        val step = (900L / text.length.coerceAtLeast(1)).coerceIn(18L, 40L)
+        for (i in 1..text.length) {
+            delay(step)
+            reveal = i
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(TapePaper)
+            .border(1.dp, TapeLine, RoundedCornerShape(8.dp))
+    ) {
+        // 走带孔
+        Canvas(Modifier.matchParentSize()) {
+            val r = 1.6.dp.toPx()
+            val step = 16.dp.toPx()
+            val top = 5.dp.toPx()
+            val bottom = size.height - 5.dp.toPx()
+            var x = 8.dp.toPx()
+            while (x < size.width - 6.dp.toPx()) {
+                drawCircle(TapeHole, r, Offset(x, top))
+                drawCircle(TapeHole, r, Offset(x, bottom))
+                x += step
+            }
+        }
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)
+        ) {
+            Row {
+                Text(
+                    text = text.take(reveal),
+                    color = TapeInk,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp,
+                    lineHeight = 28.sp
+                )
+                if (reveal < text.length) {
+                    Text(
+                        text = "▌",
+                        color = Amber.copy(alpha = cursor.value),
+                        fontSize = 20.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "AUDIO TAPE · ${text.length} CH",
+                color = TapeInk.copy(alpha = 0.45f),
+                fontSize = 7.sp,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.4.sp
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ComparisonStrip(target: String, answer: String) {
@@ -718,7 +837,7 @@ private fun CharCell(char: Char, color: Color, label: String?) {
     ) {
         Box(
             modifier = Modifier
-                .size(30.dp)
+                .defaultMinSize(minWidth = 30.dp, minHeight = 30.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(color.copy(alpha = 0.18f))
                 .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(6.dp)),
@@ -813,80 +932,83 @@ private fun BottomActionBar(
     onStop: () -> Unit,
     onToggleContent: () -> Unit,
     onCheck: () -> Unit,
+    onQsl: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    val playBtnColor by animateColorAsState(
+        targetValue = if (isPlaying) Red else Amber,
+        label = "playColor"
+    )
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(Surface1)
             .border(1.dp, Line, RoundedCornerShape(16.dp))
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(8.dp)
     ) {
-        // 换一组
-        ActionBtn(
-            icon = "↻",
-            label = "换一组",
-            color = TextDim,
-            modifier = Modifier.padding(end = 4.dp)
-        ) { onRegenerate() }
-
-        // 播放/停止（主按钮）
-        val playBtnColor by animateColorAsState(
-            targetValue = if (isPlaying) Red else Amber,
-            label = "playColor"
-        )
+        // 主操作独占一行：大字号下不会被两侧图标按钮挤压
         Box(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
+                .heightIn(min = 54.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(playBtnColor)
                 .clickable { if (isPlaying) onStop() else onPlay() }
-                .padding(vertical = 14.dp),
+                .padding(vertical = 12.dp),
             contentAlignment = Alignment.Center
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = if (isPlaying) "■" else "▶",
                     color = if (isPlaying) Color.White else Color(0xFF1A1200),
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = if (isPlaying) "停止" else "播放报文",
                     color = if (isPlaying) Color.White else Color(0xFF1A1200),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
             }
         }
 
-        // 报文内容查看（含答案核对，默认隐藏）
-        ActionBtn(
-            icon = "📄",
-            label = "报文",
-            color = if (hasContent) Amber else Cyan,
-            modifier = Modifier.padding(start = 4.dp)
-        ) { onToggleContent() }
+        Spacer(Modifier.height(8.dp))
 
-        // 判分
-        if (!scored) {
+        // 次要操作三等分，图标与文字横排，只占一行高度
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ActionBtn(
-                icon = "✓",
-                label = "判分",
-                color = Green,
-                modifier = Modifier.padding(start = 4.dp)
-            ) { onCheck() }
-        } else {
+                icon = "↻",
+                label = "换一组",
+                color = TextDim,
+                modifier = Modifier.weight(1f)
+            ) { onRegenerate() }
+
             ActionBtn(
-                icon = "✓",
-                label = "已判",
-                color = Green.copy(alpha = 0.5f),
-                modifier = Modifier.padding(start = 4.dp),
-                enabled = false
-            ) { }
+                icon = "📄",
+                label = "报文",
+                color = if (hasContent) Amber else Cyan,
+                modifier = Modifier.weight(1f)
+            ) { onToggleContent() }
+
+            if (!scored) {
+                ActionBtn(
+                    icon = "✓",
+                    label = "判分",
+                    color = Green,
+                    modifier = Modifier.weight(1f)
+                ) { onCheck() }
+            } else {
+                ActionBtn(
+                    icon = "★",
+                    label = "成绩单",
+                    color = Amber,
+                    modifier = Modifier.weight(1f)
+                ) { onQsl() }
+            }
         }
     }
 }
@@ -900,26 +1022,33 @@ private fun ActionBtn(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    Column(
+    Row(
         modifier = modifier
+            .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Surface2)
             .border(1.dp, Line, RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .clickable(enabled = enabled) {
+                if (enabled) UiSounds.click()
+                onClick()
+            }
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = icon,
             color = color,
-            fontSize = 18.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Bold
         )
+        Spacer(Modifier.width(5.dp))
         Text(
             text = label,
             color = if (enabled) color else color.copy(alpha = 0.5f),
-            fontSize = 11.sp,
-            modifier = Modifier.padding(top = 2.dp)
+            fontSize = 12.sp,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }

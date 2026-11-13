@@ -71,7 +71,11 @@ object CwRenderer {
         return out
     }
 
-    fun render(voices: List<VoiceSpec>, noiseLevel: Float): ShortArray {
+    fun render(
+        voices: List<VoiceSpec>,
+        noiseLevel: Float,
+        fadeDepth: Float = 0.55f
+    ): ShortArray {
         var totalMs = 0
         val timelines = voices.map { v ->
             var t = v.startMs
@@ -88,7 +92,9 @@ object CwRenderer {
         val buf = FloatArray(total)
 
         // 生成每个 voice 独立的衰落曲线
-        val fadingCurves = voices.map { fadingFactor(Math.random() * 1000.0, qsbDepth = 0.55f) }
+        val fadingCurves = voices.map {
+            fadingFactor(Math.random() * 1000.0, qsbDepth = fadeDepth.coerceIn(0f, 1f))
+        }
 
         for ((vi, voice) in voices.withIndex()) {
             val w = 2.0 * PI * voice.toneHz / SR
@@ -152,8 +158,9 @@ object CwRenderer {
 }
 
 /** 报文播放器 */
-class CwAudio(context: Context) {
+class CwAudio(context: Context) : PlaybackBus.Controller {
 
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
     private var track: AudioTrack? = null
@@ -162,18 +169,31 @@ class CwAudio(context: Context) {
     var isPlaying by mutableStateOf(false)
         private set
 
+    /** 由通知栏 / 耳机暂停中；会话仍存在，可继续恢复 */
+    var isPaused by mutableStateOf(false)
+        private set
+
+    init {
+        PlaybackBus.controller = this
+    }
+
     fun play(
         voices: List<VoiceSpec>,
         volume: Float = 0.85f,
         noiseLevel: Float = 0f,
-        onDone: () -> Unit = {}
+        onDone: () -> Unit = {},
+        title: String = "CW 练习",
+        subtitle: String = "电报音频播放中",
+        // 传播衰落深度：0=稳定如本地，0.55=常规短波，1=深衰落（可听出明显起伏）
+        fadeDepth: Float = 0.55f
     ) {
         if (voices.isEmpty()) return
         stop()
-        val pcm = CwRenderer.render(voices, noiseLevel)
+        val pcm = CwRenderer.render(voices, noiseLevel, fadeDepth)
         if (pcm.isEmpty()) return
         val myToken = ++token
         isPlaying = true
+        AudioGate.acquire(appContext, TAG) { stop() }
 
         job = scope.launch(Dispatchers.Default) {
             var t: AudioTrack? = null
@@ -203,6 +223,13 @@ class CwAudio(context: Context) {
                 track = t
                 t.setVolume(volume.coerceIn(0f, 1f))
                 t.play()
+                isPaused = false
+                // 短促的点播（如背码单字符）不拉起前台服务，避免通知栏闪一下
+                if (pcm.size > CwRenderer.SR * 3) {
+                    // 前台服务 + 通知栏控制：锁屏、切后台时播报不中断
+                    PlaybackBus.controller = this@CwAudio
+                    PlaybackService.start(appContext, title, subtitle)
+                }
 
                 var offset = 0
                 while (offset < pcm.size) {
@@ -213,6 +240,9 @@ class CwAudio(context: Context) {
                 delay(pcm.size.toLong() * 1000L / CwRenderer.SR + 120L)
                 if (token == myToken) {
                     isPlaying = false
+                    isPaused = false
+                    PlaybackBus.controller = null
+                    PlaybackService.dismiss(appContext)
                     onDone()
                 }
             } catch (e: Exception) {
@@ -221,12 +251,40 @@ class CwAudio(context: Context) {
                 try { t?.stop() } catch (_: Exception) {}
                 try { t?.release() } catch (_: Exception) {}
                 if (track === t) track = null
-                if (token == myToken) isPlaying = false
+                if (token == myToken) {
+                    isPlaying = false
+                    isPaused = false
+                    AudioGate.release(TAG)
+                }
             }
         }
     }
 
-    fun stop() {
+    override fun pause(): Boolean {
+        val t = track ?: return false
+        return try {
+            t.pause()
+            isPaused = true
+            true
+        } catch (e: Exception) {
+            Log.e("CwAudio", "pause failed", e)
+            false
+        }
+    }
+
+    override fun resume(): Boolean {
+        val t = track ?: return false
+        return try {
+            t.play()
+            isPaused = false
+            true
+        } catch (e: Exception) {
+            Log.e("CwAudio", "resume failed", e)
+            false
+        }
+    }
+
+    override fun stop() {
         token++
         job?.cancel()
         job = null
@@ -234,6 +292,14 @@ class CwAudio(context: Context) {
         try { track?.release() } catch (_: Exception) {}
         track = null
         isPlaying = false
+        isPaused = false
+        PlaybackBus.controller = null
+        PlaybackService.dismiss(appContext)
+        AudioGate.release(TAG)
+    }
+
+    private companion object {
+        const val TAG = "cw_audio"
     }
 }
 
@@ -244,6 +310,7 @@ class CwAudio(context: Context) {
  */
 class NoiseAudio(context: Context) {
 
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
     private var track: AudioTrack? = null
@@ -269,6 +336,7 @@ class NoiseAudio(context: Context) {
         val mySession = ++session
         running = true
         isPlaying = true
+        AudioGate.acquire(appContext, TAG) { stop() }
 
         job = scope.launch(Dispatchers.Default) {
             // 自愈外层循环：某些设备上其它音轨开始播放（尤其 SPEECH 类型）、
@@ -380,5 +448,10 @@ class NoiseAudio(context: Context) {
         // 只置停止位，让生成循环淡出后自行释放，避免咔哒声
         running = false
         isPlaying = false
+        AudioGate.release(TAG)
+    }
+
+    private companion object {
+        const val TAG = "noise"
     }
 }
