@@ -265,7 +265,12 @@ private fun TodayPlanCard(app: AppState, onOpen: (AppScreen) -> Unit) {
 
     SectionCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle("今日 3 件事")
+            Text(
+                text = "今日 3 件事",
+                color = TextDim,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
+            )
             Spacer(Modifier.weight(1f))
             Text(
                 text = "完成 $done/3",
@@ -405,7 +410,12 @@ private fun TrainingStatsCard(app: AppState) {
 
     SectionCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle("训练历史")
+            Text(
+                text = "训练历史",
+                color = TextDim,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
+            )
             Spacer(Modifier.weight(1f))
             Text(
                 text = if (streak > 0) "连续 $streak 天" else "今天还没练",
