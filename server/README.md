@@ -75,7 +75,7 @@ CW 通过 `/api/auth/*` 代理登录，并用 Bearer 校验备份请求，自己
 | `HMA_BASE` | HMA 地址，默认 `http://127.0.0.1:8787` |
 | `CW_INTERNAL_TOKEN` | 与 HMA 共享的内部令牌（会员后台 / 兑换码） |
 
-旧版 `/api/account/register|login` 在 `hybrid` 下继续可用，`hma` 模式返回 410。
+旧版 `/api/account/register|login` 在 `hybrid` 下继续可用，`hma` 模式返回 410（线上当前为 `hma`）。
 
 ## 接口
 
