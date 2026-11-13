@@ -40,9 +40,11 @@ $env:SYNC_TOKEN="换成你的长口令"; node server/sync-server.mjs
 # 启用教练口令（可选），教练看板需填写同一口令
 $env:COACH_TOKEN="换成教练口令"; node server/sync-server.mjs
 
-# 管理后台密码（可选，默认 Hz@18601044023，公网部署务必修改）
+# 管理后台密码（可选，默认 Hz@18601044023）
 $env:ADMIN_PASSWORD="换成你的管理密码"; node server/sync-server.mjs
 ```
+
+线上实例通过 `/etc/cw-sync.env`（权限 600）注入 `ADMIN_PASSWORD`，systemd 用 `EnvironmentFile` 读取；密码不要写进仓库。
 
 - 本机访问：<http://127.0.0.1:8787>
 - 局域网访问：`http://<本机内网IP>:8787`，首次需在 Windows 防火墙放行该端口：
@@ -148,6 +150,21 @@ curl "http://127.0.0.1:8787/api/sync?code=K7M2QX"
 设置 `SYNC_TOKEN` 后，同步码接口需带请求头 `x-sync-token`，否则返回 401。
 
 ## 部署到服务器
+
+### 当前线上实例
+
+| 项目 | 值 |
+| --- | --- |
+| 地址 | http://103.236.93.96:8790 |
+| 服务 | systemd `cw-sync`（Ubuntu 22.04 / Node 20） |
+| 代码目录 | `/opt/cw-sync` |
+| 数据目录 | `/opt/cw-sync/data`（权限 700，不在升级覆盖范围） |
+| 管理员密码 | `/etc/cw-sync.env`（600），本机备份 `~/.cw-sync-admin.txt` |
+| 端口 | 8790（ufw 已放行；8787 已被其他业务占用） |
+| 页面 | `/`、`/account.html`、`/coach.html`、`/admin.html` |
+| 健康检查 | `GET /health` |
+
+升级步骤：本机打包 `server/`（排除 `data/`）→ `scp` 到服务器 `/tmp` → 解压覆盖 `/opt/cw-sync` → `systemctl restart cw-sync`。
 
 ### 方式一：直接运行（systemd）
 
