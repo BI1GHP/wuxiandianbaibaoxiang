@@ -137,7 +137,7 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
         MenuCard(
             index = "02",
             title = "背码训练",
-            desc = "码表速查、听音辨码、看码辨字，逐步形成条件反射",
+            desc = "码表速查、听音辨码，逐步形成条件反射",
             accent = Green
         ) { onOpen(AppScreen.LEARN) }
 

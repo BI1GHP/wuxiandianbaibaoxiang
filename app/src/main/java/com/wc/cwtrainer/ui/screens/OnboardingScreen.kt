@@ -239,7 +239,7 @@ private fun WelcomeStep() {
         SectionTitle("三步开始")
         Spacer(Modifier.height(8.dp))
         FeatureLine("01", "听抄练习", "随机字母 / 数字 / 呼号，听音抄收并自动判分")
-        FeatureLine("02", "背码训练", "码表、听音辨码、看码辨字与间隔复习")
+        FeatureLine("02", "背码训练", "码表、听音辨码与间隔复习")
         FeatureLine("03", "赛事听抄", "CW / SSB 模拟赛场，练完可复盘并导出 ADIF")
         FeatureLine("04", "业余无线电考试", "A / B / C 类题库、错题本与模拟考")
     }

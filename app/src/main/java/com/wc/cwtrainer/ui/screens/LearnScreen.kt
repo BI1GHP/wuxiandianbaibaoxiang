@@ -240,7 +240,6 @@ fun LearnScreen(app: AppState, onBack: () -> Unit) {
         ) {
             Pill("码表速查", tab == 0) { tab = 0 }
             Pill("听音辨码", tab == 1) { tab = 1 }
-            Pill("看码辨字", tab == 2) { tab = 2 }
             Pill("今日复习 ${app.srs.dueCount()}", tab == 3) { tab = 3 }
         }
 
@@ -458,7 +457,7 @@ private fun CodeTile(c: Char, modifier: Modifier, onClick: () -> Unit) {
     }
 }
 
-// ============ Tab 1/2: 听音辨码 & 看码辨字 ============
+// ============ Tab 1/3: 听音辨码 & 今日复习 ============
 
 @Composable
 private fun QuizContent(
@@ -505,7 +504,6 @@ private fun QuizContent(
             Text(
                 text = when (tab) {
                     1 -> "听音辨码"
-                    2 -> "看码辨字"
                     else -> "今日复习"
                 },
                 color = TextDim, fontSize = 12.sp, letterSpacing = 2.sp
@@ -519,43 +517,26 @@ private fun QuizContent(
 
         Spacer(Modifier.height(22.dp))
 
-        if (tab == 1 || tab == 3) {
-            // 听音：大播放按钮
-            Box(
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(CircleShape)
-                    .background(Amber.copy(alpha = 0.15f))
-                    .border(2.dp, Amber.copy(alpha = 0.5f), CircleShape)
-                    .clickable { onPlay() },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "▶", color = Amber, fontSize = 36.sp, fontWeight = FontWeight.Bold)
-                    Text(text = "播放", color = Amber, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
-                }
+        // 听音：大播放按钮
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(CircleShape)
+                .background(Amber.copy(alpha = 0.15f))
+                .border(2.dp, Amber.copy(alpha = 0.5f), CircleShape)
+                .clickable { onPlay() },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text = "▶", color = Amber, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+                Text(text = "播放", color = Amber, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
             }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "点击圆形按钮重听电报音",
-                color = TextDim, fontSize = 11.sp
-            )
-        } else {
-            // 看码：大·/—显示
-            Text(
-                text = Morse.visualFor(question.answer),
-                color = Amber,
-                fontSize = 38.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "这串点划对应哪个字符？",
-                color = TextDim, fontSize = 11.sp
-            )
         }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "点击圆形按钮重听电报音",
+            color = TextDim, fontSize = 11.sp
+        )
 
         Spacer(Modifier.height(22.dp))
 
