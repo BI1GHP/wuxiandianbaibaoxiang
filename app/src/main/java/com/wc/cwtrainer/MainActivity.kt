@@ -76,6 +76,7 @@ import com.wc.cwtrainer.ui.screens.SkinStoreScreen
 import com.wc.cwtrainer.ui.screens.SyncScreen
 import com.wc.cwtrainer.ui.screens.ThemePreviewScreen
 import com.wc.cwtrainer.ui.screens.TranslatorScreen
+import com.wc.cwtrainer.ui.screens.HandbookScreen
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
@@ -288,6 +289,7 @@ class MainActivity : ComponentActivity() {
                                     onOpen = { screen = it }
                                 )
                                 AppScreen.TRANSLATOR -> TranslatorScreen(app) { screen = AppScreen.HOME }
+                                AppScreen.HANDBOOK -> HandbookScreen { screen = AppScreen.HOME }
                                 AppScreen.EXAM -> ExamScreen(app) { screen = AppScreen.HOME }
                                 AppScreen.SETTINGS -> SettingsScreen(
                                     app = app,
@@ -377,7 +379,7 @@ class AppState(context: Context) {
 }
 
 enum class AppScreen {
-    HOME, COPY, LEARN, CONTEST, ACCENT, COACH, TRANSLATOR, EXAM, SETTINGS, THEME_PREVIEW, SKIN_STORE,
+    HOME, COPY, LEARN, CONTEST, ACCENT, COACH, TRANSLATOR, HANDBOOK, EXAM, SETTINGS, THEME_PREVIEW, SKIN_STORE,
     CALLSIGN, SYNC, ACCOUNT, MEMBER
 }
 

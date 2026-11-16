@@ -76,11 +76,13 @@ import com.wc.cwtrainer.ui.Bg
 import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
-import com.wc.cwtrainer.ui.WpmAdjuster
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicReference
 
 enum class TranslatorTab { DECODE, KEY, ENCODE }
+
+/** 翻译器发码统一使用的基准码速：不再由用户手动调节，解码端会自动匹配实际码速 */
+private const val AUTO_SEND_WPM = 20.0
 
 @Composable
 fun TranslatorScreen(app: AppState, onBack: () -> Unit) {
@@ -155,7 +157,8 @@ private fun DecodeBlock(app: AppState) {
     // 检测器实例：tick 需要用它的采样时钟，才能和按键事件严格对齐
     var detector by remember { mutableStateOf<ToneKeyDetector?>(null) }
 
-    val decoder = remember { MorseDecoder(s.wpm.toDouble()) }
+    // 初始码速只作为兜底，实际码速由解码器从电码组合中自动估计
+    val decoder = remember { MorseDecoder(AUTO_SEND_WPM) }
     // 音频线程的按键事件统一切到主线程处理，避免与 tick/清屏并发修改解码器
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
     // 滚动状态 + 自动到底部
@@ -334,8 +337,10 @@ private fun KeyBlock(app: AppState) {
     // paddling 循环 2ms tick 里写 Compose state 会触发 500Hz 重组，导致界面跳动
     val tapMemory = remember { AtomicReference<Char?>(null) }
 
-    // 发码速度由 App 自己决定，初始码速可信
-    val decoder = remember { MorseDecoder(s.translatorWpm.toDouble(), trustInitialWpm = true) }
+    // 元素时长由 App 按标准码速生成，成组只看发报人的停顿节奏
+    val decoder = remember {
+        MorseDecoder(AUTO_SEND_WPM, trustInitialWpm = true, humanPaced = true)
+    }
     val scrollState = rememberScrollState()
 
     // —— 页面进入自动启动 SIDETONE；被来电等打断后重新拉起侧音通道 ——
@@ -351,9 +356,8 @@ private fun KeyBlock(app: AppState) {
     // —— paddling 核心：2ms tick，绝不写任何 Compose state ——
     LaunchedEffect(Unit) {
         var lastSentElem: Char? = null
+        val unitMs = 1200.0 / AUTO_SEND_WPM
         while (true) {
-            val wpm = app.prefs.data.translatorWpm
-            val unitMs = 1200.0 / wpm.coerceAtLeast(5)
 
             // 当前应发的元素：优先按住的两个拨片，其次消费一次"轻点记忆"
             val heldTarget = when {
@@ -508,9 +512,14 @@ private fun KeyBlock(app: AppState) {
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 )
                 Spacer(Modifier.width(8.dp))
-                WpmAdjuster(
-                    wpm = s.translatorWpm,
-                    onWpm = { app.prefs.update { p -> p.copy(translatorWpm = it) } }
+                Text(
+                    text = "自动码速",
+                    color = Amber, fontSize = 10.sp,
+                    maxLines = 1, softWrap = false,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                        .background(Amber.copy(alpha = 0.12f))
+                        .border(1.dp, Amber.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }
 
@@ -561,19 +570,19 @@ private fun EncodeBlock(app: AppState) {
         input.text.uppercase().filter { Morse.code(it) != null }
     }
     val durationMs = remember(textOnly) {
-        buildSegments(textOnly, Fist(wpm = s.translatorWpm.toDouble(), farnsworth = s.farnsworth.toDouble()))
+        buildSegments(textOnly, Fist(wpm = AUTO_SEND_WPM, farnsworth = s.farnsworth.toDouble()))
             .sumOf { it.ms }
     }
 
     fun play() {
         val txt = input.text.uppercase().trim().filter { Morse.code(it) != null }
         if (txt.isEmpty()) return
-        val fist = Fist(wpm = s.translatorWpm.toDouble(), farnsworth = s.farnsworth.toDouble())
+        val fist = Fist(wpm = AUTO_SEND_WPM, farnsworth = s.farnsworth.toDouble())
         app.audio.play(
             voices = listOf(VoiceSpec(text = txt, fist = fist, toneHz = s.toneHz.toDouble())),
             volume = s.volume, noiseLevel = s.noiseLevel,
             title = "CW 翻译器",
-            subtitle = "${s.translatorWpm} WPM"
+            subtitle = "自动码速 ${AUTO_SEND_WPM.toInt()} WPM"
         )
     }
 
@@ -624,7 +633,7 @@ private fun EncodeBlock(app: AppState) {
 
         Spacer(Modifier.height(10.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("速度 ${s.translatorWpm} WPM", Amber)
+            StatChip("自动码速 ${AUTO_SEND_WPM.toInt()} WPM", Amber)
             StatChip("音调 ${s.toneHz} Hz", Green)
             StatChip("时长 ${"%.1f".format(durationMs / 1000.0)} s", TextDim)
         }

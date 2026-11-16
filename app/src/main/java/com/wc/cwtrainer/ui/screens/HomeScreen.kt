@@ -160,6 +160,14 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
         Spacer(Modifier.height(10.dp))
         MenuCard(
             index = "05",
+            title = "通联手册",
+            desc = "UV / 短波通联规范 · 标准流程 · Q 短语速查，支持全文检索",
+            accent = Color(0xFF6BE3B0)
+        ) { onOpen(AppScreen.HANDBOOK) }
+
+        Spacer(Modifier.height(10.dp))
+        MenuCard(
+            index = "06",
             title = "业余无线电考试",
             desc = "按序背题 · 分类背题 · 错题本 · 模拟考试（A/B/C 类）",
             accent = Color(0xFFB388FF)
@@ -167,7 +175,7 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
 
         Spacer(Modifier.height(10.dp))
         MenuCard(
-            index = "06",
+            index = "07",
             title = "口音适应",
             desc = "15 国母语音色 · 字母解释法听辨 · 逐国命中率",
             accent = Cyan
@@ -207,6 +215,7 @@ private fun subjectTitle(screen: AppScreen): String = when (screen) {
     AppScreen.ACCENT -> "口音适应"
     AppScreen.COACH -> "AI 教练"
     AppScreen.TRANSLATOR -> "CW 翻译器"
+    AppScreen.HANDBOOK -> "通联手册"
     AppScreen.EXAM -> "业余无线电考试"
     AppScreen.SETTINGS -> "设置"
     AppScreen.THEME_PREVIEW -> "主题预览"

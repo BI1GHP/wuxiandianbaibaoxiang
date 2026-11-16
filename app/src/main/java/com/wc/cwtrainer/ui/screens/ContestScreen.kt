@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.wc.cwtrainer.ui.screens
 
 import android.os.SystemClock
@@ -25,9 +27,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -68,6 +74,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -168,6 +176,15 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
     var callIn by remember { mutableStateOf(TextFieldValue("")) }
     var serialIn by remember { mutableStateOf(TextFieldValue("")) }
     var check by remember { mutableStateOf<ContestCheck?>(null) }
+    // 输入法弹出后，把抄收填写区滚到可视区域，避免被键盘遮住
+    val copyBring = remember { BringIntoViewRequester() }
+    var copyFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(copyFocused) {
+        if (copyFocused) {
+            kotlinx.coroutines.delay(320)
+            copyBring.bringIntoView()
+        }
+    }
 
     // CW / SSB 模式（SSB 用系统 TTS 模仿各国口音播报）
     var mode by remember { mutableStateOf(s.contestMode) }
@@ -376,7 +393,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(PanelBg)) {
+    Column(Modifier.fillMaxSize().background(PanelBg).imePadding()) {
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth()
                 .verticalScroll(rememberScrollState())
@@ -538,6 +555,8 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             CopyPanel(
                 callIn = callIn, serialIn = serialIn,
+                modifier = Modifier.bringIntoViewRequester(copyBring),
+                onFocusChange = { copyFocused = it },
                 onCall = { v ->
                     // 呼号统一大写：用户输入小写自动转大写显示，光标跟随到末尾
                     val up = v.text.uppercase()
@@ -1037,11 +1056,14 @@ private fun ScriptPanel(script: String, plain: String?, show: Boolean, onToggle:
 @Composable
 private fun CopyPanel(
     callIn: TextFieldValue, serialIn: TextFieldValue,
+    modifier: Modifier = Modifier,
+    onFocusChange: (Boolean) -> Unit = {},
     onCall: (TextFieldValue) -> Unit, onSerial: (TextFieldValue) -> Unit
 ) {
     val serialFocus = remember { FocusRequester() }
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
+        modifier = modifier.onFocusChanged { onFocusChange(it.hasFocus) }
+            .fillMaxWidth().padding(horizontal = 14.dp)
             .clip(RoundedCornerShape(10.dp)).background(PanelRaised)
             .border(1.dp, PanelLine, RoundedCornerShape(10.dp)).padding(14.dp)
     ) {
@@ -1061,7 +1083,13 @@ private fun CopyPanel(
                 MetalField(
                     value = callIn, onValueChange = onCall, fontSize = 18,
                     highlightDigits = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardOptions = KeyboardOptions(
+                        // 呼号只有英文与数字：进入输入框直接切英文键盘，并默认大写
+                        keyboardType = KeyboardType.Ascii,
+                        capitalization = KeyboardCapitalization.Characters,
+                        autoCorrect = false,
+                        imeAction = ImeAction.Next
+                    ),
                     keyboardActions = KeyboardActions(onNext = { serialFocus.requestFocus() }),
                     onPreviewKeyEvent = { event ->
                         val jump = event.type == KeyEventType.KeyDown &&
@@ -1093,7 +1121,12 @@ private fun CopyPanel(
                 Spacer(Modifier.height(4.dp))
                 MetalField(
                     value = serialIn, onValueChange = onSerial, fontSize = 16,
-                    modifier = Modifier.focusRequester(serialFocus)
+                    modifier = Modifier.focusRequester(serialFocus),
+                    // 序号只填数字：进入输入框直接切数字键盘
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    )
                 )
             }
         }
