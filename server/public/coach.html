@@ -379,7 +379,7 @@ function render(data) {
           <div class="nums">
             <div><b>${m.learnTotal}</b><span>背码题数</span></div>
             <div><b>${pct(m.copyBest)}</b><span>听抄最佳</span></div>
-            <div><b>${m.contestBest}/3</b><span>赛事最佳</span></div>
+            <div><b>${m.contestRate == null ? '—' : pct(m.contestRate)}</b><span>赛事听抄正确率</span></div>
           </div>
           <div class="bars">${bars}</div>
           <div class="days">${labels}</div>

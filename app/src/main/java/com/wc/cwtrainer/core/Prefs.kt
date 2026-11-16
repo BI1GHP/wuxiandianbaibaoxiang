@@ -12,7 +12,7 @@ enum class KeyMode { STRAIGHT, PADDLE }
 enum class InputMode { SCREEN, AUDIO }
 
 /** 外观主题 / 皮肤 */
-enum class ThemeMode { FIELD, CREAM, OLIVE, SAND, OCEAN }
+enum class ThemeMode { FIELD, CREAM, OLIVE, SAND, OCEAN, LED, CYBER }
 
 data class SettingsData(
     val wpm: Int = 20,
@@ -176,6 +176,16 @@ class StatsStore(context: Context) {
         private set
     var contestBest by mutableStateOf(sp.getInt("contestBest", 0))
         private set
+    /** 赛事累计判分要素数（呼号 + 序号，每题 2 项） */
+    var contestTotal by mutableStateOf(sp.getInt("contestTotal", 0))
+        private set
+    /** 赛事累计正确要素数 */
+    var contestCorrect by mutableStateOf(sp.getInt("contestCorrect", 0))
+        private set
+
+    /** 赛事听抄正确率（0~1），没有数据时为 0 */
+    val contestRate: Float
+        get() = if (contestTotal <= 0) 0f else contestCorrect.toFloat() / contestTotal
 
     /** 最近 30 天训练历史，按日期升序 */
     var history by mutableStateOf(loadHistory())
@@ -210,12 +220,20 @@ class StatsStore(context: Context) {
         }
     }
 
-    fun reportContest(score: Int) {
-        if (score > contestBest) {
-            contestBest = score
+    /** 赛事判分：只统计呼号与序号两项，RST 不计入 */
+    fun reportContest(callOk: Boolean, serialOk: Boolean) {
+        val correct = (if (callOk) 1 else 0) + (if (serialOk) 1 else 0)
+        contestTotal += 2
+        contestCorrect += correct
+        sp.edit()
+            .putInt("contestTotal", contestTotal)
+            .putInt("contestCorrect", contestCorrect)
+            .apply()
+        if (correct > contestBest) {
+            contestBest = correct
             sp.edit().putInt("contestBest", contestBest).apply()
         }
-        updateToday { it.copy(contestCount = it.contestCount + 1, contestBest = maxOf(it.contestBest, score)) }
+        updateToday { it.copy(contestCount = it.contestCount + 1, contestBest = maxOf(it.contestBest, correct)) }
     }
 
     /** 口音适应完成一轮 */
@@ -341,6 +359,8 @@ class StatsStore(context: Context) {
         learnTotal = sp.getInt("learnTotal", 0)
         copyBest = sp.getFloat("copyBest", 0f)
         contestBest = sp.getInt("contestBest", 0)
+        contestTotal = sp.getInt("contestTotal", 0)
+        contestCorrect = sp.getInt("contestCorrect", 0)
         history = loadHistory()
         charStats = loadCharStats()
     }

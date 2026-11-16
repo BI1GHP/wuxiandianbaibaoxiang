@@ -49,8 +49,10 @@ import com.wc.cwtrainer.core.ThemeMode
 import com.wc.cwtrainer.core.UpdateManager
 import com.wc.cwtrainer.ui.Amber
 import com.wc.cwtrainer.ui.CreamPalette
+import com.wc.cwtrainer.ui.CyberPalette
 import com.wc.cwtrainer.ui.FieldPalette
 import com.wc.cwtrainer.ui.Green
+import com.wc.cwtrainer.ui.LedPalette
 import com.wc.cwtrainer.ui.WcColors
 import com.wc.cwtrainer.ui.LabeledSlider
 import com.wc.cwtrainer.ui.Line
@@ -185,7 +187,7 @@ fun SettingsScreen(
             SectionCard {
                 SectionTitle("外观主题")
                 Text(
-                    text = "两套主题共用同一套操作逻辑，点选立即应用到整个 App。",
+                    text = "四套主题共用同一套操作逻辑，点选立即应用到整个 App；军绿/黄沙/深海与两款新风格可在皮肤商店解锁。",
                     color = TextDim,
                     fontSize = 11.sp,
                     lineHeight = 16.sp
@@ -207,6 +209,23 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f)
                     ) { app.prefs.update { it.copy(theme = ThemeMode.CREAM) } }
                 }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ThemePreviewCard(
+                        title = "LED 灯珠",
+                        subtitle = "点阵荧光 · 夜训高对比",
+                        palette = LedPalette,
+                        selected = s.theme == ThemeMode.LED,
+                        modifier = Modifier.weight(1f)
+                    ) { app.prefs.update { it.copy(theme = ThemeMode.LED) } }
+                    ThemePreviewCard(
+                        title = "赛博霓虹",
+                        subtitle = "洋红青蓝 · 未来电台",
+                        palette = CyberPalette,
+                        selected = s.theme == ThemeMode.CYBER,
+                        modifier = Modifier.weight(1f)
+                    ) { app.prefs.update { it.copy(theme = ThemeMode.CYBER) } }
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Pill("全屏预览", false) { onPreviewTheme() }
@@ -214,7 +233,7 @@ fun SettingsScreen(
                     Pill("皮肤商店", false) { onOpenSkins() }
                 }
                 Text(
-                    text = "全屏对比两套主题；更多皮肤可用训练积分在商店解锁",
+                    text = "全屏对比各套主题；更多皮肤可用训练积分在商店解锁",
                     color = TextDim,
                     fontSize = 10.sp,
                     modifier = Modifier.padding(top = 4.dp)

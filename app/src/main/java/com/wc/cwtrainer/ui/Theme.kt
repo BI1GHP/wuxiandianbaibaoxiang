@@ -140,12 +140,52 @@ val OceanPalette = WcColors(
     onAccent = Color(0xFF04121E)
 )
 
+/** 皮肤 F：LED 灯珠（近纯黑底 + 荧光绿点阵） */
+val LedPalette = WcColors(
+    isDark = true,
+    bg = Color(0xFF060806),
+    surface1 = Color(0xFF11160F),
+    surface2 = Color(0xFF030503),
+    line = Color(0xFF24331D),
+    accent = Color(0xFF9CFF3B),
+    accentAlt = Color(0xFFFFB020),
+    info = Color(0xFF35E0FF),
+    textMain = Color(0xFFEAFFE0),
+    textDim = Color(0xFF7E9170),
+    danger = Color(0xFFFF4D4D),
+    ledDim = Color(0xFF33402A),
+    metalLight = Color(0xFF24331D),
+    metalDark = Color(0xFF030503),
+    onAccent = Color(0xFF062000)
+)
+
+/** 皮肤 G：赛博霓虹（深紫黑底 + 洋红/青色霓虹） */
+val CyberPalette = WcColors(
+    isDark = true,
+    bg = Color(0xFF0A0614),
+    surface1 = Color(0xFF160E2A),
+    surface2 = Color(0xFF06030F),
+    line = Color(0xFF33215C),
+    accent = Color(0xFFFF3EA5),
+    accentAlt = Color(0xFF22E8FF),
+    info = Color(0xFF8C7BFF),
+    textMain = Color(0xFFF0E9FF),
+    textDim = Color(0xFF9386B8),
+    danger = Color(0xFFFF5577),
+    ledDim = Color(0xFF3B2B66),
+    metalLight = Color(0xFF33215C),
+    metalDark = Color(0xFF06030F),
+    onAccent = Color(0xFF14000A)
+)
+
 fun paletteOf(mode: ThemeMode): WcColors = when (mode) {
     ThemeMode.FIELD -> FieldPalette
     ThemeMode.CREAM -> CreamPalette
     ThemeMode.OLIVE -> OlivePalette
     ThemeMode.SAND -> SandPalette
     ThemeMode.OCEAN -> OceanPalette
+    ThemeMode.LED -> LedPalette
+    ThemeMode.CYBER -> CyberPalette
 }
 
 /**

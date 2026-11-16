@@ -347,7 +347,11 @@ fun AccountScreen(app: AppState, onBack: () -> Unit) {
                 SnapshotLine("呼号 / 等级", "${s.callsign} · ${if (s.opClass == "NONE") "未考证" else s.opClass + " 类"}")
                 SnapshotLine("背码题数", "${app.stats.learnTotal}")
                 SnapshotLine("听抄最佳", "${(app.stats.copyBest * 100).toInt()}%")
-                SnapshotLine("赛事最佳", "${app.stats.contestBest}")
+                SnapshotLine(
+                    "赛事听抄正确率",
+                    if (app.stats.contestTotal == 0) "—"
+                    else "${(app.stats.contestRate * 100).toInt()}%"
+                )
                 SnapshotLine("当前皮肤", skinOf(s.theme).name)
                 SnapshotLine("训练积分", "$points")
             }

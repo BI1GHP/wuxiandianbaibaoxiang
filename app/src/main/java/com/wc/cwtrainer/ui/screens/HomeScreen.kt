@@ -179,7 +179,11 @@ fun HomeScreen(app: AppState, onOpen: (AppScreen) -> Unit) {
             Spacer(Modifier.height(6.dp))
             StatLine("背码正确率", learnText(app))
             StatLine("听抄最佳", if (app.stats.copyBest <= 0f) "—" else pct(app.stats.copyBest))
-            StatLine("赛事最佳", "${app.stats.contestBest}/3")
+            StatLine(
+                "赛事听抄正确率",
+                if (app.stats.contestTotal == 0) "—"
+                else "${(app.stats.contestRate * 100).toInt()}%"
+            )
         }
 
         Spacer(Modifier.height(14.dp))

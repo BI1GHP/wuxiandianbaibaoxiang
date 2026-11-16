@@ -32,6 +32,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
@@ -48,16 +50,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -328,7 +338,7 @@ fun ContestScreen(app: AppState, onBack: () -> Unit) {
         // RST 固定 599，不参与判分输入
         check = ContestGen.check(station, callIn.text, "599", serialIn.text)
         check?.let { c ->
-            app.stats.reportContest(c.score)
+            app.stats.reportContest(c.callOk, c.serialOk)
             app.contestLog.add(
                 ContestQso(
                     timeMs = System.currentTimeMillis(),
@@ -1029,6 +1039,7 @@ private fun CopyPanel(
     callIn: TextFieldValue, serialIn: TextFieldValue,
     onCall: (TextFieldValue) -> Unit, onSerial: (TextFieldValue) -> Unit
 ) {
+    val serialFocus = remember { FocusRequester() }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
             .clip(RoundedCornerShape(10.dp)).background(PanelRaised)
@@ -1047,7 +1058,18 @@ private fun CopyPanel(
                 Text("呼号  CALL", color = LedAmber.copy(alpha = 0.95f),
                     fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
-                MetalField(value = callIn, onValueChange = onCall, fontSize = 18, highlightDigits = true)
+                MetalField(
+                    value = callIn, onValueChange = onCall, fontSize = 18,
+                    highlightDigits = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { serialFocus.requestFocus() }),
+                    onPreviewKeyEvent = { event ->
+                        val jump = event.type == KeyEventType.KeyDown &&
+                            (event.key == Key.Enter || event.key == Key.Spacebar)
+                        if (jump) serialFocus.requestFocus()
+                        jump
+                    }
+                )
             }
             Column(Modifier.weight(1f)) {
                 Text("RST", color = LedAmber.copy(alpha = 0.95f),
@@ -1069,7 +1091,10 @@ private fun CopyPanel(
                 Text("序号  NR", color = LedAmber.copy(alpha = 0.95f),
                     fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(4.dp))
-                MetalField(value = serialIn, onValueChange = onSerial, fontSize = 16)
+                MetalField(
+                    value = serialIn, onValueChange = onSerial, fontSize = 16,
+                    modifier = Modifier.focusRequester(serialFocus)
+                )
             }
         }
     }
@@ -1078,10 +1103,17 @@ private fun CopyPanel(
 @Composable
 private fun MetalField(
     value: TextFieldValue, onValueChange: (TextFieldValue) -> Unit,
-    fontSize: Int, placeholder: String? = null, highlightDigits: Boolean = false
+    fontSize: Int, placeholder: String? = null, highlightDigits: Boolean = false,
+    modifier: Modifier = Modifier,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    onPreviewKeyEvent: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { false }
 ) {
     BasicTextField(
         value = value, onValueChange = onValueChange,
+        modifier = modifier.onPreviewKeyEvent(onPreviewKeyEvent),
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         textStyle = TextStyle(
             fontFamily = FontFamily.Monospace, fontSize = fontSize.sp,
             fontWeight = FontWeight.Bold, color = LedGreen
@@ -1117,8 +1149,8 @@ private fun ResultPanel(check: ContestCheck, station: com.wc.cwtrainer.core.Cont
                 fontFamily = FontFamily.Monospace, letterSpacing = 1.5.sp)
             Spacer(Modifier.weight(1f))
             Text(
-                text = "${check.score} / 3",
-                color = when { check.score == 3 -> LedGreen; check.score == 2 -> LedAmber; else -> LedRed },
+                text = "${check.score} / 2",
+                color = when { check.score == 2 -> LedGreen; check.score == 1 -> LedAmber; else -> LedRed },
                 fontSize = 32.sp, fontWeight = FontWeight.Black,
                 fontFamily = FontFamily.Monospace
             )
@@ -1127,8 +1159,6 @@ private fun ResultPanel(check: ContestCheck, station: com.wc.cwtrainer.core.Cont
         Box(Modifier.fillMaxWidth().height(1.dp).background(PanelLine))
         Spacer(Modifier.height(10.dp))
         CheckLine("呼号 CALL", check.callOk, station.call)
-        Spacer(Modifier.height(6.dp))
-        CheckLine("RST", check.reportOk, station.report)
         Spacer(Modifier.height(6.dp))
         CheckLine("序号 SERIAL", check.serialOk, station.serial)
     }

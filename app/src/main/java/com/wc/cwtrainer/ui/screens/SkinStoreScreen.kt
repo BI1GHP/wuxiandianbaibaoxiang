@@ -107,7 +107,7 @@ fun SkinStoreScreen(app: AppState, onBack: () -> Unit) {
                 }
             }
             Text(
-                text = "背码 1 题 = 1 分；听抄最佳正确率 ×2；赛事最佳分直接计入。完成训练即自动累积。",
+                text = "背码 1 题 = 1 分；听抄最佳正确率 ×2；赛事答题加分。完成训练即自动累积。",
                 color = TextDim,
                 fontSize = 10.sp,
                 lineHeight = 15.sp,

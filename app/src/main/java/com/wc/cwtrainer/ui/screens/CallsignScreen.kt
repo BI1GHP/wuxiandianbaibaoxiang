@@ -126,7 +126,8 @@ fun CallsignScreen(app: AppState, onBack: () -> Unit) {
                     motto = s.motto,
                     learnTotal = app.stats.learnTotal,
                     copyBest = app.stats.copyBest,
-                    contestBest = app.stats.contestBest
+                    contestRate = app.stats.contestRate,
+                    hasContest = app.stats.contestTotal > 0
                 )
             }
 
@@ -217,7 +218,8 @@ private fun CallsignBadge(
     motto: String,
     learnTotal: Int,
     copyBest: Float,
-    contestBest: Int
+    contestRate: Float,
+    hasContest: Boolean
 ) {
     Box(
         modifier = Modifier
@@ -300,7 +302,7 @@ private fun CallsignBadge(
             ) {
                 BadgeStat("背码", "$learnTotal")
                 BadgeStat("听抄最佳", "${(copyBest * 100).toInt()}%")
-                BadgeStat("赛事最佳", "$contestBest")
+                BadgeStat("赛事正确率", if (hasContest) "${(contestRate * 100).toInt()}%" else "—")
             }
 
             Spacer(Modifier.height(12.dp))

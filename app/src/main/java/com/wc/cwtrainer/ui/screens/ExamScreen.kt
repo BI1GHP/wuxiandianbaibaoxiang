@@ -53,6 +53,7 @@ import com.wc.cwtrainer.AppState
 import com.wc.cwtrainer.core.ExamChapters
 import com.wc.cwtrainer.core.ExamLevel
 import com.wc.cwtrainer.core.ExamRecord
+import com.wc.cwtrainer.core.Mnemonics
 import com.wc.cwtrainer.core.Question
 import com.wc.cwtrainer.core.QuestionBank
 import com.wc.cwtrainer.ui.QslCardDialog
@@ -708,6 +709,10 @@ private fun PracticePane(
                         color = PaperGreen.copy(alpha = 0.5f), dot = 1.8f)
                 }
             }
+            if (reveal) {
+                Spacer(Modifier.height(10.dp))
+                MnemonicCard(Mnemonics.of(q))
+            }
             Spacer(Modifier.height(12.dp))
 
             // 多选确认（仅错题本作答模式）
@@ -750,6 +755,46 @@ private fun PracticePane(
                 primary = idx < queue.size - 1,
                 modifier = Modifier.weight(1f)) { idx++ }
         }
+    }
+}
+
+/** 背题口诀卡片：只出现在按序/分类背题，模拟考试不显示 */
+@Composable
+private fun MnemonicCard(text: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(PaperShape)
+            .background(PaperAmber.copy(alpha = 0.08f))
+            .border(1.2.dp, PaperAmber.copy(alpha = 0.55f), PaperShape)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "背诵口诀",
+                color = PaperAmber,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.5.sp
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "MNEMONIC",
+                color = PaperDim,
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.5.sp
+            )
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = text,
+            color = PaperInk,
+            fontSize = 13.5.sp,
+            lineHeight = 21.sp,
+            fontFamily = ExamFont
+        )
     }
 }
 

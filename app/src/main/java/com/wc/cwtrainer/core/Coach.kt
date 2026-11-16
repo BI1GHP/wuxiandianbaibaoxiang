@@ -48,7 +48,8 @@ object CoachEngine {
         copyWpm: Int,
         learnTotal: Int,
         copyBest: Float,
-        contestBest: Int,
+        contestRate: Float,
+        hasContest: Boolean,
         confused: List<Pair<Char, Int>>,
         dueCount: Int,
         streak: Int,
@@ -63,7 +64,7 @@ object CoachEngine {
             confused.isNotEmpty() && confused.first().second >= 2 ->
                 "攻克易混字符 " + confused.take(3).joinToString(" / ") { it.first.toString() }
             copyBest > 0f && copyBest < 0.75f -> "听抄准确率冲刺 85%"
-            contestBest in 1..2 -> "赛事抄收稳定性"
+            hasContest && contestRate < 0.7f -> "赛事抄收稳定性"
             weakAccent != null -> "适应${accentName(weakAccent.key)}口音"
             learnTotal == 0 -> "建立字母与数字的条件反射"
             else -> "稳步提速，冲击 ${copyWpm + 5} WPM"
@@ -76,8 +77,9 @@ object CoachEngine {
             insight += "最易混：" + confused.take(3).joinToString("、") { "${it.first}×${it.second}" }
         }
         if (copyBest > 0f) insight += "听抄最佳 ${(copyBest * 100).roundToInt()}% · 建议码速 $copyWpm WPM"
-        if (contestBest > 0) {
-            insight += "赛事最佳 $contestBest/3" + if (contestBest < 3) "，可尝试同频多台" else "，可开启传播波动"
+        if (hasContest) {
+            insight += "赛事听抄正确率 ${(contestRate * 100).roundToInt()}%" +
+                if (contestRate < 0.9f) "，先稳定呼号与序号" else "，可尝试同频多台 + 传播波动"
         }
         if (weakAccent != null) {
             insight += "${accentName(weakAccent.key)}口音命中率 ${(weakAccent.value * 100).roundToInt()}%，列为补练"
@@ -105,7 +107,7 @@ object CoachEngine {
         val confusedText = if (confused.isEmpty()) "E / I / S / H"
             else confused.take(3).joinToString(" / ") { it.first.toString() }
         val accentPick = weakAccent?.key ?: "de-DE"
-        val contestAdvice = if (contestBest >= 3) "开启「同频多台 + 传播波动」挑战一轮"
+        val contestAdvice = if (hasContest && contestRate >= 0.9f) "开启「同频多台 + 传播波动」挑战一轮"
             else "先关闭干扰，稳定抄收呼号与序号"
         val reviewTarget = when {
             confused.isNotEmpty() -> CoachTarget.LEARN

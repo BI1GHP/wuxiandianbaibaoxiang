@@ -49,11 +49,13 @@ fun coachPlan(app: AppState): CoachPlan = CoachEngine.weekly(
     copyWpm = app.prefs.data.copyWpm,
     learnTotal = app.stats.learnTotal,
     copyBest = app.stats.copyBest,
-    contestBest = app.stats.contestBest,
+    contestRate = app.stats.contestRate,
+    hasContest = app.stats.contestTotal > 0,
     confused = app.stats.topConfused(),
     dueCount = app.srs.dueCount(),
     streak = app.stats.streakDays(),
-    accentBest = app.accent.best,
+    // 单字母成绩用 "<locale>#L" 存储，教练建议只取呼号组合的口音数据
+    accentBest = app.accent.best.filterKeys { !it.contains("#") },
     history = app.stats.history
 )
 

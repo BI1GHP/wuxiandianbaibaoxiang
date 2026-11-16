@@ -223,7 +223,11 @@ fun SyncScreen(app: AppState, onBack: () -> Unit) {
                 SnapshotRow("呼号 / 等级", "${s.callsign} · ${if (s.opClass == "NONE") "未考证" else s.opClass + " 类"}")
                 SnapshotRow("背码题数", "${app.stats.learnTotal}")
                 SnapshotRow("听抄最佳", "${(app.stats.copyBest * 100).toInt()}%")
-                SnapshotRow("赛事最佳", "${app.stats.contestBest}")
+                SnapshotRow(
+                    "赛事听抄正确率",
+                    if (app.stats.contestTotal == 0) "—"
+                    else "${(app.stats.contestRate * 100).toInt()}%"
+                )
                 SnapshotRow("当前皮肤", skinOf(s.theme).name)
                 SnapshotRow("训练积分", "$points")
             }

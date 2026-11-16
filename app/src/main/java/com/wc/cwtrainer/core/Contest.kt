@@ -29,7 +29,8 @@ data class ContestCheck(
     val reportOk: Boolean,
     val serialOk: Boolean
 ) {
-    val score: Int get() = (if (callOk) 1 else 0) + (if (reportOk) 1 else 0) + (if (serialOk) 1 else 0)
+    /** RST 固定 599，不参与判分：只计呼号与序号，满分 2 */
+    val score: Int get() = (if (callOk) 1 else 0) + (if (serialOk) 1 else 0)
 }
 
 object ContestGen {
@@ -191,6 +192,9 @@ object ContestGen {
     }
 
     private val digitWords = listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+
+    /** 单个字母在该国解释法下的单词，用于单字母听辨练习 */
+    fun letterWord(c: Char, style: PhoneticStyle): String = phonetic(c, style)
 
     fun spellCall(call: String, style: PhoneticStyle, rng: Random = Random): String =
         call.map { c ->

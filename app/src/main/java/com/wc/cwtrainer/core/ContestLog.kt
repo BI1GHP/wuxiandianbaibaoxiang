@@ -22,7 +22,8 @@ data class ContestQso(
     val reportOk: Boolean,
     val serialOk: Boolean
 ) {
-    val score: Int get() = (if (callOk) 1 else 0) + (if (reportOk) 1 else 0) + (if (serialOk) 1 else 0)
+    /** RST 固定 599，不参与判分：只计呼号与序号，满分 2 */
+    val score: Int get() = (if (callOk) 1 else 0) + (if (serialOk) 1 else 0)
 }
 
 /** 一次复盘统计 */

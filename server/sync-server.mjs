@@ -489,6 +489,9 @@ function summarizeMember(code, record) {
     .sort((a, b) => b.miss - a.miss)
     .slice(0, 3)
 
+  const contestTotal = prefNumber(prefs, 'wc_stats', 'contestTotal')
+  const contestCorrect = prefNumber(prefs, 'wc_stats', 'contestCorrect')
+
   return {
     code,
     found: true,
@@ -500,6 +503,7 @@ function summarizeMember(code, record) {
     learnCorrect: prefNumber(prefs, 'wc_stats', 'learnCorrect'),
     copyBest: prefNumber(prefs, 'wc_stats', 'copyBest'),
     contestBest: prefNumber(prefs, 'wc_stats', 'contestBest'),
+    contestRate: contestTotal > 0 ? contestCorrect / contestTotal : null,
     streak,
     weekTotal,
     days,

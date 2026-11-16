@@ -54,12 +54,19 @@ import com.wc.cwtrainer.ui.Surface2
 import com.wc.cwtrainer.ui.TextDim
 import com.wc.cwtrainer.ui.TextMain
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 private data class AccentCountry(
     val locale: String,
     val name: String,
     val style: PhoneticStyle
 )
+
+/** 练习模式：完整呼号组合 / 单字母 */
+private enum class AccentMode(val label: String, val desc: String) {
+    CALL("呼号组合", "听完整呼号，选出 4 个呼号中的正确项"),
+    LETTER("单字母", "听单个字母的解释法发音，选出对应字母")
+}
 
 private val COUNTRIES = listOf(
     AccentCountry("en-US", "美国", PhoneticStyle.NATO),
@@ -80,31 +87,55 @@ private val COUNTRIES = listOf(
 )
 
 private data class AccentQuestion(
-    val call: String,
+    val answer: String,
     val options: List<String>,
     val words: List<String>,
     val voiceKey: String,
     val rate: Float,
-    val pitch: Float
+    val pitch: Float,
+    val prompt: String
 )
 
 /** 一轮 5 题，按国家出题并记录最佳命中率 */
-private fun makeQuestion(locale: String, style: PhoneticStyle): AccentQuestion? {
+private fun makeQuestion(locale: String, style: PhoneticStyle, mode: AccentMode): AccentQuestion? {
     val base = ContestGen.stationFor(locale) ?: return null
-    val calls = linkedSetOf(base.call)
-    var guard = 0
-    while (calls.size < 4 && guard++ < 60) {
-        ContestGen.stationFor(locale)?.let { calls.add(it.call) }
+    val rate = 0.90f + Random.nextFloat() * 0.15f
+    return when (mode) {
+        AccentMode.CALL -> {
+            val calls = linkedSetOf(base.call)
+            var guard = 0
+            while (calls.size < 4 && guard++ < 60) {
+                ContestGen.stationFor(locale)?.let { calls.add(it.call) }
+            }
+            val words = ContestGen.spellCall(base.call, style).split(" ").filter { it.isNotBlank() }
+            AccentQuestion(
+                answer = base.call,
+                options = calls.toList().shuffled(),
+                words = words,
+                voiceKey = base.voiceKey,
+                rate = rate,
+                pitch = base.pitch,
+                prompt = "听呼号的字母解释法，选出完整呼号"
+            )
+        }
+        AccentMode.LETTER -> {
+            val letter = ('A' + Random.nextInt(26))
+            val opts = linkedSetOf(letter)
+            var guard = 0
+            while (opts.size < 4 && guard++ < 60) {
+                opts.add('A' + Random.nextInt(26))
+            }
+            AccentQuestion(
+                answer = letter.toString(),
+                options = opts.map { it.toString() }.shuffled(),
+                words = listOf(ContestGen.letterWord(letter, style)),
+                voiceKey = base.voiceKey,
+                rate = rate,
+                pitch = base.pitch,
+                prompt = "听字母解释法单词，选出对应字母"
+            )
+        }
     }
-    val words = ContestGen.spellCall(base.call, style).split(" ").filter { it.isNotBlank() }
-    return AccentQuestion(
-        call = base.call,
-        options = calls.toList().shuffled(),
-        words = words,
-        voiceKey = base.voiceKey,
-        rate = 0.90f + kotlin.random.Random.nextFloat() * 0.15f,
-        pitch = base.pitch
-    )
 }
 
 @Composable
@@ -113,6 +144,7 @@ fun AccentScreen(app: AppState, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var selected by remember { mutableStateOf<AccentCountry?>(null) }
+    var mode by remember { mutableStateOf<AccentMode?>(null) }
     var question by remember { mutableStateOf<AccentQuestion?>(null) }
     var qIndex by remember { mutableStateOf(0) }
     var correctCount by remember { mutableStateOf(0) }
@@ -137,28 +169,30 @@ fun AccentScreen(app: AppState, onBack: () -> Unit) {
         scope.launch { playQuestion(q) }
     }
 
-    fun start(c: AccentCountry) {
+    fun start(c: AccentCountry, m: AccentMode) {
         app.voiceBank.stop()
         app.voice.stop()
         selected = c
+        mode = m
         qIndex = 0
         correctCount = 0
         picked = null
         finished = false
         error = null
-        question = makeQuestion(c.locale, c.style)
+        question = makeQuestion(c.locale, c.style, m)
     }
 
     fun next() {
         val c = selected ?: return
+        val m = mode ?: return
         if (qIndex >= 4) {
-            app.accent.report(c.locale, correctCount / 5f)
+            app.accent.report(c.locale, correctCount / 5f, m == AccentMode.LETTER)
             app.stats.reportAccent()
             finished = true
         } else {
             qIndex++
             picked = null
-            question = makeQuestion(c.locale, c.style)
+            question = makeQuestion(c.locale, c.style, m)
         }
     }
 
@@ -195,8 +229,13 @@ fun AccentScreen(app: AppState, onBack: () -> Unit) {
                             .weight(1f)
                             .padding(start = 4.dp)
                     ) {
+                        val suffix = when {
+                            selected == null -> ""
+                            mode == null -> " · ${selected!!.name}"
+                            else -> " · ${selected!!.name} · ${mode!!.label}"
+                        }
                         Text(
-                            text = if (selected == null) "口音适应" else "口音适应 · ${selected!!.name}",
+                            text = "口音适应$suffix",
                             color = TextMain,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
@@ -222,6 +261,7 @@ fun AccentScreen(app: AppState, onBack: () -> Unit) {
                                     app.voiceBank.stop()
                                     app.voice.stop()
                                     selected = null
+                                    mode = null
                                     question = null
                                 }
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -240,19 +280,37 @@ fun AccentScreen(app: AppState, onBack: () -> Unit) {
         ) {
             Spacer(Modifier.height(10.dp))
             val c = selected
+            val m = mode
             if (c == null) {
-                CountryList(app) { start(it) }
+                CountryList(app) { picked ->
+                    app.voiceBank.stop()
+                    app.voice.stop()
+                    selected = picked
+                    mode = null
+                    question = null
+                }
+            } else if (m == null) {
+                ModePanel(c, onPick = { start(c, it) }, onBack = {
+                    selected = null
+                    question = null
+                })
             } else if (finished) {
                 ResultPanel(
                     country = c,
+                    mode = m,
                     correct = correctCount,
-                    best = app.accent.bestOf(c.locale) ?: 0f,
-                    onAgain = { start(c) },
-                    onSwitch = { selected = null; question = null }
+                    best = app.accent.bestOf(c.locale, m == AccentMode.LETTER) ?: 0f,
+                    onAgain = { start(c, m) },
+                    onSwitch = {
+                        selected = null
+                        mode = null
+                        question = null
+                    }
                 )
             } else {
                 QuestionPanel(
                     country = c,
+                    mode = m,
                     index = qIndex,
                     correct = correctCount,
                     question = question,
@@ -263,7 +321,7 @@ fun AccentScreen(app: AppState, onBack: () -> Unit) {
                     onPick = { opt ->
                         if (picked == null && question != null) {
                             picked = opt
-                            if (opt == question!!.call) correctCount++
+                            if (opt == question!!.answer) correctCount++
                         }
                     },
                     onNext = { next() }
@@ -280,14 +338,16 @@ private fun CountryList(app: AppState, onPick: (AccentCountry) -> Unit) {
         SectionTitle("选择口音")
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "用各国母语音色朗读字母解释法呼号，练「听懂口音」而不是背电码。每轮 5 题，按国家记录最佳命中率。",
+            text = "用各国母语音色朗读字母解释法，练「听懂口音」而不是背电码。每轮 5 题；" +
+                "进入后可选择「呼号组合」或「单字母」练习，按国家分别记录最佳命中率。",
             color = TextDim,
             fontSize = 11.sp,
             lineHeight = 16.sp
         )
         Spacer(Modifier.height(10.dp))
         COUNTRIES.forEach { c ->
-            val best = app.accent.bestOf(c.locale)
+            val callBest = app.accent.bestOf(c.locale)
+            val letterBest = app.accent.bestOf(c.locale, true)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -307,9 +367,14 @@ private fun CountryList(app: AppState, onPick: (AccentCountry) -> Unit) {
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = if (best != null) "最佳 ${(best * 100).toInt()}%" else "未挑战",
-                    color = if (best != null) Green else TextDim,
-                    fontSize = 11.sp,
+                    text = buildString {
+                        append("呼号 ")
+                        append(callBest?.let { "${(it * 100).toInt()}%" } ?: "—")
+                        append(" · 字母 ")
+                        append(letterBest?.let { "${(it * 100).toInt()}%" } ?: "—")
+                    },
+                    color = if (callBest != null || letterBest != null) Green else TextDim,
+                    fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
@@ -324,8 +389,66 @@ private fun CountryList(app: AppState, onPick: (AccentCountry) -> Unit) {
 }
 
 @Composable
+private fun ModePanel(
+    country: AccentCountry,
+    onPick: (AccentMode) -> Unit,
+    onBack: () -> Unit
+) {
+    SectionCard {
+        SectionTitle("${country.name}口音 · 选择练习")
+        Spacer(Modifier.height(8.dp))
+        AccentMode.entries.forEach { m ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Surface2)
+                    .border(1.dp, Line, RoundedCornerShape(12.dp))
+                    .clickable { onPick(m) }
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = m.label,
+                        color = TextMain,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = m.desc,
+                        color = TextDim,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                }
+                Text(
+                    text = "开始 ›",
+                    color = Amber,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
+        Text(
+            text = "‹ 返回国家列表",
+            color = TextDim,
+            fontSize = 11.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onBack() }
+                .padding(vertical = 6.dp)
+        )
+    }
+}
+
+@Composable
 private fun QuestionPanel(
     country: AccentCountry,
+    mode: AccentMode,
     index: Int,
     correct: Int,
     question: AccentQuestion?,
@@ -347,7 +470,7 @@ private fun QuestionPanel(
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "${country.name}口音",
+                text = "${country.name}口音 · ${mode.label}",
                 color = Amber,
                 fontSize = 12.sp,
                 letterSpacing = 1.sp
@@ -387,7 +510,7 @@ private fun QuestionPanel(
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "听呼号的字母解释法，选出完整呼号",
+            text = question?.prompt ?: "听发音后作答",
             color = TextDim,
             fontSize = 11.sp
         )
@@ -406,7 +529,7 @@ private fun QuestionPanel(
                     rowOpts.forEach { opt ->
                         OptionCell(
                             text = opt,
-                            isAnswer = opt == q.call,
+                            isAnswer = opt == q.answer,
                             picked = picked,
                             modifier = Modifier.weight(1f)
                         ) { onPick(opt) }
@@ -422,8 +545,8 @@ private fun QuestionPanel(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (picked == q.call) "✓ 正确" else "✗ 正确呼号 ${q.call}",
-                        color = if (picked == q.call) Green else Red,
+                        text = if (picked == q.answer) "✓ 正确" else "✗ 正确答案 ${q.answer}",
+                        color = if (picked == q.answer) Green else Red,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -497,6 +620,7 @@ private fun OptionCell(
 @Composable
 private fun ResultPanel(
     country: AccentCountry,
+    mode: AccentMode,
     correct: Int,
     best: Float,
     onAgain: () -> Unit,
@@ -507,7 +631,7 @@ private fun ResultPanel(
         SectionTitle("本轮成绩")
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "${country.name}口音 · $correct / 5",
+            text = "${country.name}口音 · ${mode.label} · $correct / 5",
             color = TextMain,
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold

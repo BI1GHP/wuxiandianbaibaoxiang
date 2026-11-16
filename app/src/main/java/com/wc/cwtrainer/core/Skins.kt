@@ -13,14 +13,16 @@ val Skins = listOf(
     SkinInfo(ThemeMode.CREAM, "奶油手帐", "纸感珊瑚 · 柔美主题", 0),
     SkinInfo(ThemeMode.OLIVE, "丛林军绿", "哑光军绿 · 野战电台", 300),
     SkinInfo(ThemeMode.SAND, "沙漠黄沙", "暖沙面板 · 强光可读", 600),
-    SkinInfo(ThemeMode.OCEAN, "深海蓝调", "冷蓝背光 · 夜间守听", 900)
+    SkinInfo(ThemeMode.OCEAN, "深海蓝调", "冷蓝背光 · 夜间守听", 900),
+    SkinInfo(ThemeMode.LED, "LED 灯珠", "点阵荧光 · 夜训高对比", 1200),
+    SkinInfo(ThemeMode.CYBER, "赛博霓虹", "洋红青蓝 · 未来电台", 1500)
 )
 
 fun skinOf(mode: ThemeMode): SkinInfo = Skins.first { it.mode == mode }
 
 /**
  * 训练积分：完全由本地练习数据换算，不需要账号与支付。
- * 背码题数 + 听抄最佳正确率 ×2 + 赛事最佳分。
+ * 背码题数 + 听抄最佳正确率 ×2 + 赛事答题加分。
  */
 fun trainingPoints(stats: StatsStore): Int =
     stats.learnTotal + (stats.copyBest * 100).toInt() * 2 + stats.contestBest
