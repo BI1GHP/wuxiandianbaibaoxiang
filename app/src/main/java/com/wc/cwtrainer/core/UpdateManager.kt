@@ -43,8 +43,9 @@ object UpdateManager {
     private const val OWNER = "BI1GHP"
     private const val REPO = "wuxiandianbaibaoxiang"
 
-    // 双源：GitHub 用官方 API（匿名可用），Gitee 走网页重定向（匿名 API 已 403）
+    // 双源：GitHub / Gitee 均优先用 Releases API（匿名可访问）拿真实资产直链
     private const val GITHUB_RELEASES = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
+    private const val GITEE_API_LATEST = "https://gitee.com/api/v5/repos/$OWNER/$REPO/releases/latest"
     private const val GITEE_LATEST_WEB = "https://gitee.com/$OWNER/$REPO/releases/latest"
 
     data class ReleaseInfo(
@@ -175,12 +176,32 @@ object UpdateManager {
     }
 
     /**
-     * Gitee 网页端最新 Release 探测。
-     * 匿名 API（/api/v5/...）已全面 403，网页端 /releases/latest 会 302 到
-     * /releases/tag/{最新tag}，跟随重定向后从最终 URL 解析 tag；
-     * 附件按发版约定拼网页直链，再用 HEAD 取大小（取不到则为 0）。
+     * Gitee 最新 Release。
+     * 优先用匿名 Releases API 取实际 APK 资产直链：附件名由每次发版决定，
+     * 硬编码文件名一旦改名就会 404（历史问题：CW练考通_* 已改为 CW百宝箱_*）。
+     * API 不可用时退回网页 /releases/latest 解析 tag，再按当前/旧两套命名探测。
      */
     private fun fetchGitee(): Parsed? {
+        try {
+            val json = httpGet(GITEE_API_LATEST, timeout = 4000)
+            val root = JSONObject(json)
+            val tag = root.optString("tag_name", "")
+            val apkUrl = findApkGitHub(root.optJSONArray("assets"))
+            if (tag.isNotBlank() && apkUrl != null) {
+                return Parsed(
+                    tag = tag,
+                    htmlUrl = root.optString(
+                        "html_url", "https://gitee.com/$OWNER/$REPO/releases/tag/$tag"
+                    ),
+                    body = root.optString("body", ""),
+                    apkUrl = apkUrl,
+                    apkSize = findApkSizeGitHub(root.optJSONArray("assets"))
+                )
+            }
+        } catch (_: Exception) {
+            // 匿名 API 被限流/不可用时继续走网页兜底
+        }
+
         val conn = (URL(GITEE_LATEST_WEB).openConnection() as HttpURLConnection).apply {
             connectTimeout = 2500
             readTimeout = 2500
@@ -193,14 +214,22 @@ object UpdateManager {
         conn.disconnect()
         val tag = Regex("/releases/tag/([^/?#]+)").find(finalUrl)
             ?.groupValues?.get(1) ?: return null
-        val apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/" +
-            Uri.encode("CW练考通_$tag.apk")
+
+        var apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/" +
+            Uri.encode("CW百宝箱_$tag.apk")
+        var size = headSize(apkUrl)
+        if (size <= 0L) {
+            // 兼容 V3.1.1 及以前的附件命名
+            apkUrl = "https://gitee.com/$OWNER/$REPO/releases/download/$tag/" +
+                Uri.encode("CW练考通_$tag.apk")
+            size = headSize(apkUrl)
+        }
         return Parsed(
             tag = tag,
             htmlUrl = finalUrl,
             body = "",
             apkUrl = apkUrl,
-            apkSize = headSize(apkUrl)
+            apkSize = size
         )
     }
 
